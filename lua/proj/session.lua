@@ -21,7 +21,10 @@ end
 
 local function ensure_dir()
     if fn.isdirectory(session_dir) == 0 then
-        fn.mkdir(session_dir, "p")
+        local ok = pcall(fn.mkdir, session_dir, "p")
+        if not ok then
+            vim.notify("Failed to create session directory", vim.log.levels.WARN)
+        end
     end
 end
 
@@ -46,10 +49,10 @@ end
 function M.restore(name, root)
     local path = session_path(name)
     if fn.filereadable(path) == 1 then
-        -- Wipe only the current tab's windows before sourcing.
-        -- mksession with TAB_SSOP doesn't emit tabnew, so it restores
-        -- into whatever tab is current without touching others.
-        pcall(vim.cmd, "silent! %bwipeout!")
+        -- Reset only the current tab before sourcing the single-tab session.
+        -- Avoid global :bwipeout because it can close windows in other tabs.
+        pcall(vim.cmd, "silent! only")
+        pcall(vim.cmd, "silent! enew")
         local ok = pcall(vim.cmd, "source " .. fn.fnameescape(path))
         if ok then
             vim.cmd.tcd(fn.fnameescape(root))

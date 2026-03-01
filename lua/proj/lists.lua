@@ -28,9 +28,11 @@ function M.parse(filepath)
     end
     local items = {}
     local current = nil
+    local saw_heading = false
     for i, line in ipairs(lines) do
         local heading = line:match("^##%s+(.+)")
         if heading then
+            saw_heading = true
             if current then
                 items[#items + 1] = current
             end
@@ -42,19 +44,19 @@ function M.parse(filepath)
     if current then
         items[#items + 1] = current
     end
-    return items
-end
-
--- Ensure a file exists, creating it empty if needed.
----@param filepath string
-local function ensure_file(filepath)
-    if fn.filereadable(filepath) ~= 1 then
-        local dir = fn.fnamemodify(filepath, ":h")
-        if fn.isdirectory(dir) == 0 then
-            fn.mkdir(dir, "p")
-        end
-        fn.writefile({}, filepath)
+    if saw_heading then
+        return items
     end
+
+    -- Backward-compat for legacy/plain list files without markdown headings.
+    for i, line in ipairs(lines) do
+        local text = vim.trim(line)
+        if text ~= "" then
+            text = text:gsub("^[-*+]%s+", "")
+            items[#items + 1] = { header = text, body = {}, lnum = i }
+        end
+    end
+    return items
 end
 
 -- Rewrite filepath keeping all items except the one with the given header.
@@ -76,7 +78,10 @@ local function delete_item(filepath, header)
             end
         end
     end
-    fn.writefile(lines, filepath)
+    local ok = pcall(fn.writefile, lines, filepath)
+    if not ok then
+        vim.notify("Failed to rewrite list file", vim.log.levels.WARN)
+    end
 end
 
 -- Append a parsed item to a file and delete it from the source.
@@ -105,8 +110,18 @@ local function move_item(item, src_filepath, dst_filepath, annotation)
         dst[#dst + 1] = l
     end
     local dir = fn.fnamemodify(dst_filepath, ":h")
-    if fn.isdirectory(dir) == 0 then fn.mkdir(dir, "p") end
-    fn.writefile(dst, dst_filepath)
+    if fn.isdirectory(dir) == 0 then
+        local ok = pcall(fn.mkdir, dir, "p")
+        if not ok then
+            vim.notify("Failed to create destination directory", vim.log.levels.WARN)
+            return
+        end
+    end
+    local ok_write = pcall(fn.writefile, dst, dst_filepath)
+    if not ok_write then
+        vim.notify("Failed to write to destination list", vim.log.levels.WARN)
+        return
+    end
     delete_item(src_filepath, item.header)
     vim.notify(
         "Moved '" .. item.header .. "' → " .. fn.fnamemodify(dst_filepath, ":t"),
@@ -167,7 +182,21 @@ end
 ---@param title string
 ---@param project_root? string  needed for move actions; nil disables them
 function M.pick(filepath, title, project_root)
-    ensure_file(filepath)
+    if fn.filereadable(filepath) ~= 1 then
+        local dir = fn.fnamemodify(filepath, ":h")
+        if fn.isdirectory(dir) == 0 then
+            local ok_mkdir = pcall(fn.mkdir, dir, "p")
+            if not ok_mkdir then
+                vim.notify("Failed to create list directory", vim.log.levels.WARN)
+                return
+            end
+        end
+        local ok_create = pcall(fn.writefile, {}, filepath)
+        if not ok_create then
+            vim.notify("Failed to create list file", vim.log.levels.WARN)
+            return
+        end
+    end
 
     local is_todo = fn.fnamemodify(filepath, ":t"):upper() == "TODO.MD"
     local totest_path = project_root and (project_root .. "/TOTEST.md") or nil
@@ -197,6 +226,7 @@ function M.pick(filepath, title, project_root)
         footer     = hints(is_todo),
         footer_pos = "center",
         items      = picker_items,
+        show_empty = true,
 
         confirm = function(picker, item)
             if item then
@@ -209,6 +239,9 @@ function M.pick(filepath, title, project_root)
                     picker:close()
                     M.add(filepath, pattern)
                     reopen()
+                else
+                    picker:close()
+                    vim.cmd.edit(fn.fnameescape(filepath))
                 end
             end
         end,
@@ -279,6 +312,7 @@ function M.pick_global(projects, filename, title)
     Snacks.picker({
         title = title .. " (all projects)",
         items = picker_items,
+        show_empty = true,
         confirm = function(picker, item)
             picker:close()
             if item then
@@ -323,6 +357,69 @@ function M.add_to_project(projects, filename, title)
     })
 end
 
+-- Pick a project, then pick a list in that project, then add an item.
+---@param projects proj.Project[]
+function M.add_to_any_project_list(projects)
+    if #projects == 0 then
+        vim.notify("No projects registered", vim.log.levels.WARN)
+        return
+    end
+    local items = {}
+    for _, proj in ipairs(projects) do
+        items[#items + 1] = { text = proj.name, root = proj.root }
+    end
+    Snacks.picker({
+        title  = "Select project to add item to",
+        items  = items,
+        format = function(it) return { { it.text } } end,
+        preview = function(ctx)
+            ctx.preview:set_lines({ ctx.item.root })
+            return true
+        end,
+        confirm = function(picker, it)
+            picker:close()
+            if not it then return end
+            
+            local candidates = fn.glob(it.root .. "/*.md", false, true)
+            local list_items = {}
+            for _, path in ipairs(candidates) do
+                list_items[#list_items + 1] = { text = fn.fnamemodify(path, ":t"), path = path }
+            end
+            
+            Snacks.picker({
+                title = "Select list in " .. it.text,
+                items = list_items,
+                format = function(list_it) return { { list_it.text } } end,
+                preview = function(ctx)
+                    ctx.preview:set_lines({ ctx.item.path })
+                    return true
+                end,
+                confirm = function(list_picker, list_it)
+                    list_picker:close()
+                    local filepath
+                    if list_it then
+                        filepath = list_it.path
+                    else
+                        local typed = list_picker:filter().pattern
+                        if typed and typed ~= "" then
+                            local name = typed:match("%.md$") and typed or (typed .. ".md")
+                            filepath = it.root .. "/" .. name
+                        else
+                            return
+                        end
+                    end
+                    local list_name = fn.fnamemodify(filepath, ":r")
+                    Snacks.input({ prompt = "New " .. list_name .. " (" .. it.text .. ")" }, function(value)
+                        if value and value ~= "" then
+                            M.add(filepath, value)
+                        end
+                    end)
+                end,
+            })
+        end,
+    })
+end
+
 -- Open a picker for a project-independent global list (stored in global_dir).
 ---@param filename string
 ---@param title string
@@ -361,9 +458,73 @@ function M.add(filepath, text)
         existing[#existing + 1] = lines[i]
     end
     local dir = fn.fnamemodify(filepath, ":h")
-    if fn.isdirectory(dir) == 0 then fn.mkdir(dir, "p") end
-    fn.writefile(existing, filepath)
-    vim.notify("Added to " .. fn.fnamemodify(filepath, ":t"), vim.log.levels.INFO)
+    if fn.isdirectory(dir) == 0 then
+        local ok = pcall(fn.mkdir, dir, "p")
+        if not ok then
+            vim.notify("Failed to create list directory", vim.log.levels.WARN)
+            return
+        end
+    end
+    local ok_write = pcall(fn.writefile, existing, filepath)
+    if ok_write then
+        vim.notify("Added to " .. fn.fnamemodify(filepath, ":t"), vim.log.levels.INFO)
+    else
+        vim.notify("Failed to write to list file", vim.log.levels.WARN)
+    end
+end
+
+---@param project_root string
+function M.toggle_preview(project_root)
+    if M._preview_win and M._preview_win:valid() then
+        M._preview_win:close()
+        M._preview_win = nil
+        return
+    end
+
+    local candidates = fn.glob(project_root .. "/*.md", false, true)
+    local lines = {}
+    for _, path in ipairs(candidates) do
+        local items = M.parse(path)
+        if #items > 0 then
+            local filename = fn.fnamemodify(path, ":t")
+            if #lines > 0 then
+                lines[#lines + 1] = ""
+                lines[#lines + 1] = "---"
+                lines[#lines + 1] = ""
+            end
+            lines[#lines + 1] = "# " .. filename
+            lines[#lines + 1] = ""
+            for _, item in ipairs(items) do
+                lines[#lines + 1] = "## " .. item.header
+                for _, bl in ipairs(item.body) do
+                    lines[#lines + 1] = bl
+                end
+            end
+        end
+    end
+
+    if #lines == 0 then
+        vim.notify("No non-empty lists found", vim.log.levels.INFO)
+        return
+    end
+
+    local buf = api.nvim_create_buf(false, true)
+    api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+    vim.bo[buf].filetype = "markdown"
+    vim.bo[buf].modifiable = false
+    vim.bo[buf].bufhidden = "wipe"
+
+    M._preview_win = Snacks.win({
+        buf = buf,
+        title = "Lists Preview",
+        border = "rounded",
+        width = 0.8,
+        height = 0.8,
+        keys = { q = "close", ["<Esc>"] = "close" },
+        on_close = function()
+            M._preview_win = nil
+        end
+    })
 end
 
 return M

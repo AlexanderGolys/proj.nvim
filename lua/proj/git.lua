@@ -4,6 +4,7 @@ local M = {}
 -- ###nvim-plugin
 
 local fn = vim.fn
+local api = vim.api
 
 ---@param cmd string[]
 ---@param cwd string
@@ -52,8 +53,8 @@ function M.diff(cwd)
         vim.notify("No unstaged changes", vim.log.levels.INFO)
         return
     end
-    local buf = vim.api.nvim_create_buf(false, true)
-    vim.api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(out, "\n", { plain = true }))
+    local buf = api.nvim_create_buf(false, true)
+    api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(out, "\n", { plain = true }))
     vim.bo[buf].filetype = "diff"
     vim.bo[buf].modifiable = false
     vim.bo[buf].bufhidden = "wipe"

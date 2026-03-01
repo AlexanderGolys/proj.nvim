@@ -11,14 +11,17 @@ local M = {}
 local project = require("proj.project")
 local session = require("proj.session")
 local lists = require("proj.lists")
+local issues = require("proj.issues")
 local git = require("proj.git")
 
 ---@class proj.Config
 ---@field keymap_prefix string   leader prefix for all proj keymaps (default: "p")
+---@field register_keymap_lhs string  lhs to disable in buffers inside registered projects
 
 ---@type proj.Config
 local defaults = {
     keymap_prefix = "p",
+    register_keymap_lhs = "<kEnter>a",
 }
 
 ---@type table<integer, proj.Project>
@@ -46,6 +49,7 @@ local function open_project(proj)
     if prev then
         session.save(prev.name)
     end
+    project.increment_open(proj.root)
     local tab = vim.api.nvim_get_current_tabpage()
     tab_projects[tab] = proj
     vim.cmd.tcd(vim.fn.fnameescape(proj.root))
@@ -88,11 +92,6 @@ local function add_to_list(filename, title)
     end)
 end
 
----@param cur proj.Project
-local function with_root(cur, fn)
-    fn(cur.root)
-end
-
 -- Auto-detect current project if none is set. If the current buffer's directory
 -- matches a registered project, set it as the current project for this tab.
 local function auto_detect_project()
@@ -104,7 +103,13 @@ local function auto_detect_project()
     -- Get current buffer's directory (or cwd if no buffer)
     local buf = vim.api.nvim_get_current_buf()
     local buf_name = vim.api.nvim_buf_get_name(buf)
-    local cwd = buf_name ~= "" and vim.fn.fnamemodify(buf_name, ":h") or vim.fn.getcwd()
+    
+    local cwd
+    if buf_name ~= "" and not buf_name:match("^%a+://") then
+        cwd = vim.fn.fnamemodify(buf_name, ":h")
+    else
+        cwd = vim.fn.getcwd()
+    end
 
     -- Check against registered projects
     local projects = project.read()
@@ -118,12 +123,35 @@ local function auto_detect_project()
 
     -- Also try to find a parent directory that matches (handles subdirs)
     for _, proj in ipairs(projects) do
-        if cwd:find("^" .. proj.root .. "/") then
+        if vim.startswith(cwd .. "/", proj.root .. "/") then
             tab_projects[tab] = proj
             vim.cmd.tcd(vim.fn.fnameescape(proj.root))
             return
         end
     end
+end
+
+-- Ensure current tab's cwd always matches its active project root.
+local function sync_tab_cwd()
+    local tab = vim.api.nvim_get_current_tabpage()
+    if not tab_projects[tab] then
+        auto_detect_project()
+    end
+    local cur = tab_projects[tab]
+    if cur then
+        vim.cmd.tcd(vim.fn.fnameescape(cur.root))
+    end
+end
+
+---@param path string
+---@return boolean
+local function in_registered_project(path)
+    for _, proj in ipairs(project.read()) do
+        if path == proj.root or vim.startswith(path .. "/", proj.root .. "/") then
+            return true
+        end
+    end
+    return false
 end
 
 -- ── Setup ─────────────────────────────────────────────────────────────────────
@@ -137,10 +165,46 @@ function M.setup(opts)
 
     local aug = vim.api.nvim_create_augroup("Proj", { clear = true })
 
+    local function sync_register_keymap()
+        if cfg.register_keymap_lhs == "" then
+            return
+        end
+        local buf = vim.api.nvim_get_current_buf()
+        local buf_name = vim.api.nvim_buf_get_name(buf)
+        local dir
+        if buf_name ~= "" and not buf_name:match("^%a+://") then
+            dir = vim.fn.fnamemodify(buf_name, ":p:h")
+        else
+            dir = vim.fn.getcwd()
+        end
+        if in_registered_project(dir) then
+            vim.keymap.set({ "n", "x" }, cfg.register_keymap_lhs, "<Nop>", {
+                buffer = buf,
+                noremap = true,
+                silent = true,
+                desc = "Project add disabled in registered project",
+            })
+            return
+        end
+        pcall(vim.keymap.del, "n", cfg.register_keymap_lhs, { buffer = buf })
+        pcall(vim.keymap.del, "x", cfg.register_keymap_lhs, { buffer = buf })
+    end
+
     -- Auto-detect project on startup if none is set for the current tab
-    auto_detect_project()
+    vim.schedule(function()
+        sync_tab_cwd()
+        sync_register_keymap()
+    end)
 
     -- ── Commands ──────────────────────────────────────────────────────────────
+
+    vim.api.nvim_create_user_command("ProjectHelp", function()
+        local ok = pcall(vim.cmd, "vert help proj.nvim")
+        if not ok then
+            pcall(vim.cmd, "vert help proj")
+        end
+        pcall(vim.cmd, "wincmd =")
+    end, { desc = "Open proj help in an equal vertical split" })
 
     vim.api.nvim_create_user_command("ProjectAdd", function()
         local root = project.find_git_root()
@@ -153,6 +217,7 @@ function M.setup(opts)
             local tab = vim.api.nvim_get_current_tabpage()
             tab_projects[tab] = proj
             vim.cmd.tcd(vim.fn.fnameescape(root))
+            sync_register_keymap()
         end
     end, { desc = "Register current git repo as project" })
 
@@ -162,6 +227,9 @@ function M.setup(opts)
             vim.notify("No projects registered", vim.log.levels.INFO)
             return
         end
+        table.sort(projects, function(a, b)
+            return (a.open_count or 0) > (b.open_count or 0)
+        end)
         local items = {}
         for _, p in ipairs(projects) do
             items[#items + 1] = { text = p.name, root = p.root, name = p.name }
@@ -228,65 +296,88 @@ function M.setup(opts)
         lists.add_to_project(project.read(), filename, vim.fn.fnamemodify(filename, ":r"))
     end, { nargs = 1, desc = "Add item to a list in any project" })
 
+    vim.api.nvim_create_user_command("ProjectGlobalAddAnyItem", function()
+        lists.add_to_any_project_list(project.read())
+    end, { desc = "Add item to any list in any project" })
+
     vim.api.nvim_create_user_command("ProjectGlobalAddTodo",   function() lists.add_to_project(project.read(), "TODO.md",   "TODO")   end, { desc = "Add TODO to any project" })
     vim.api.nvim_create_user_command("ProjectGlobalAddBug",    function() lists.add_to_project(project.read(), "BUGS.md",   "BUG")    end, { desc = "Add BUG to any project" })
     vim.api.nvim_create_user_command("ProjectGlobalAddTotest", function() lists.add_to_project(project.read(), "TOTEST.md", "TOTEST") end, { desc = "Add TOTEST to any project" })
 
-    -- @@@proj.git.commands
+    -- ── Issue commands (JSON-based) ───────────────────────────────────────────
 
-    vim.api.nvim_create_user_command("ProjectGitStatus",  function()
-        local cur = M.current(); if cur then with_root(cur, git.status)  end
-    end, { desc = "Git status for current project" })
-    vim.api.nvim_create_user_command("ProjectGitDiff",    function()
-        local cur = M.current(); if cur then with_root(cur, git.diff)    end
-    end, { desc = "Git diff for current project" })
-    vim.api.nvim_create_user_command("ProjectGitHistory", function()
-        local cur = M.current(); if cur then with_root(cur, git.history) end
-    end, { desc = "Git history for current project" })
-    vim.api.nvim_create_user_command("ProjectGitCommit",  function()
-        local cur = M.current(); if cur then with_root(cur, git.commit)  end
-    end, { desc = "Git commit for current project" })
-    vim.api.nvim_create_user_command("ProjectGitStash",   function()
-        local cur = M.current(); if cur then with_root(cur, git.stash)   end
-    end, { desc = "Git stash for current project" })
-    vim.api.nvim_create_user_command("ProjectGitBranch",  function()
-        local cur = M.current(); if cur then with_root(cur, git.branch)  end
-    end, { desc = "Git new branch for current project" })
-
-    vim.api.nvim_create_user_command("ProjectOpenCode", function()
+    local function pick_issues(kind, title)
         local cur = M.current()
         if not cur then
             vim.notify("No active project", vim.log.levels.WARN)
             return
         end
+        issues.pick(issues.path(cur.root, kind), title, cur.root)
+    end
+
+    vim.api.nvim_create_user_command("ProjectIssues",
+        function() pick_issues("bugs", "Bugs") end,
+        { desc = "Pick bugs from .issues/bugs.json" })
+
+    vim.api.nvim_create_user_command("ProjectIssuesTodo",
+        function() pick_issues("todos", "Todos") end,
+        { desc = "Pick todos from .issues/todos.json" })
+
+    vim.api.nvim_create_user_command("ProjectIssuesGlobal", function()
+        issues.pick_global(project.read(), "bugs", "Bugs")
+    end, { desc = "Global bugs picker across all projects" })
+
+    vim.api.nvim_create_user_command("ProjectIssuesTodoGlobal", function()
+        issues.pick_global(project.read(), "todos", "Todos")
+    end, { desc = "Global todos picker across all projects" })
+
+    -- @@@proj.git.commands
+
+    vim.api.nvim_create_user_command("ProjectGitStatus",  function()
+        local cur = M.current(); if cur then git.status(cur.root)  end
+    end, { desc = "Git status for current project" })
+    vim.api.nvim_create_user_command("ProjectGitDiff",    function()
+        local cur = M.current(); if cur then git.diff(cur.root)    end
+    end, { desc = "Git diff for current project" })
+    vim.api.nvim_create_user_command("ProjectGitHistory", function()
+        local cur = M.current(); if cur then git.history(cur.root) end
+    end, { desc = "Git history for current project" })
+    vim.api.nvim_create_user_command("ProjectGitCommit",  function()
+        local cur = M.current(); if cur then git.commit(cur.root)  end
+    end, { desc = "Git commit for current project" })
+    vim.api.nvim_create_user_command("ProjectGitStash",   function()
+        local cur = M.current(); if cur then git.stash(cur.root)   end
+    end, { desc = "Git stash for current project" })
+    vim.api.nvim_create_user_command("ProjectGitBranch",  function()
+        local cur = M.current(); if cur then git.branch(cur.root)  end
+    end, { desc = "Git new branch for current project" })
+
+    vim.api.nvim_create_user_command("ProjectOpenCode", function()
+        local cur = M.current()
+        if not cur then
+            vim.notify("No active project, opening global opencode", vim.log.levels.INFO)
+            require("proj.opencode").toggle()
+            return
+        end
         vim.cmd.tcd(vim.fn.fnameescape(cur.root))
-        require("opencode").toggle()
+        require("proj.opencode").toggle()
     end, { desc = "Toggle opencode for current project" })
+
+    vim.api.nvim_create_user_command("ProjectPreviewLists", function()
+        local cur = M.current()
+        if not cur then
+            vim.notify("No active project", vim.log.levels.WARN)
+            return
+        end
+        lists.toggle_preview(cur.root)
+    end, { desc = "Toggle preview of all non-empty lists found in current project" })
 
     -- @@@proj.keymaps
 
+    local map = vim.keymap.set
     local prefix = "<leader>" .. cfg.keymap_prefix
-    local function map(lhs, rhs, desc)
-        vim.keymap.set("n", prefix .. lhs, rhs, { desc = "Proj: " .. desc })
-    end
-
-    map("s",   "<cmd>ProjectSwitch<cr>",           "[S]witch project")
-    map("A",   "<cmd>ProjectAdd<cr>",              "[A]dd project")
-    map("t",   "<cmd>ProjectTodo<cr>",             "[T]odo list")
-    map("b",   "<cmd>ProjectBugs<cr>",             "[B]ugs list")
-    map("d",   "<cmd>ProjectTotest<cr>",           "Tot[e]st list")
-    map("r",   "<cmd>ProjectRemember<cr>",         "[R]emember list")
-    map("at",  "<cmd>ProjectAddTodo<cr>",          "Add [t]odo")
-    map("ab",  "<cmd>ProjectAddBug<cr>",           "Add [b]ug")
-    map("ad",  "<cmd>ProjectAddTotest<cr>",        "Add tot[e]st")
-    map("ar",  "<cmd>ProjectAddRemember<cr>",      "Add [r]emember")
-    map("o",   "<cmd>ProjectOpenCode<cr>",         "[O]pencode toggle")
-    map("gt",  "<cmd>ProjectGlobalTodo<cr>",       "[G]lobal [t]odo")
-    map("gk",  "<cmd>ProjectGlobalKeymaps<cr>",    "[G]lobal [k]eymaps")
-    map("gr",  "<cmd>ProjectGlobalRemember<cr>",   "[G]lobal [r]emember")
-    map("agt", "<cmd>ProjectGlobalAddTodo<cr>",    "[G]lobal add [t]odo")
-    map("agk", "<cmd>ProjectGlobalAddKeymaps<cr>", "[G]lobal add [k]eymaps")
-    map("agr", "<cmd>ProjectGlobalAddRemember<cr>","[G]lobal add [r]emember")
+    map("n", prefix .. "a", "<cmd>ProjectGlobalAddAnyItem<CR>", { desc = "Add item to any list in any project" })
+    map("n", prefix .. "p", "<cmd>ProjectPreviewLists<CR>", { desc = "Preview all lists in current project" })
 
     -- @@@proj.autocmds
 
@@ -301,6 +392,16 @@ function M.setup(opts)
                     break
                 end
             end
+            sync_tab_cwd()
+        end,
+    })
+
+    vim.api.nvim_create_autocmd({ "TabEnter", "BufEnter" }, {
+        group = aug,
+        desc = "Keep tab cwd and project-add keymap synced",
+        callback = function()
+            sync_tab_cwd()
+            sync_register_keymap()
         end,
     })
 

@@ -8,15 +8,32 @@ local fn = vim.fn
 ---@class proj.Project
 ---@field root string
 ---@field name string
+---@field open_count? integer
 
 local registry_path = fn.stdpath("data") .. "/proj_registry.json"
+
+---@param root string
+---@return boolean
+local function is_proj_repo(root)
+    return fn.filereadable(root .. "/plugin/proj.lua") == 1
+        and fn.filereadable(root .. "/lua/proj/init.lua") == 1
+end
+
+---@param root string
+---@return string
+local function project_name(root)
+    if is_proj_repo(root) then
+        return "proj.nvim"
+    end
+    return fn.fnamemodify(root, ":t")
+end
 
 ---@param root string
 ---@return proj.Project
 function M.new(root)
     return {
         root = root,
-        name = fn.fnamemodify(root, ":t"),
+        name = project_name(root),
     }
 end
 
@@ -33,6 +50,17 @@ function M.read()
     if not ok2 or type(data) ~= "table" then
         return {}
     end
+    local changed = false
+    for _, p in ipairs(data) do
+        local normalized = project_name(p.root)
+        if p.name ~= normalized then
+            p.name = normalized
+            changed = true
+        end
+    end
+    if changed then
+        M.write(data)
+    end
     return data
 end
 
@@ -40,10 +68,21 @@ end
 function M.write(projects)
     local dir = fn.fnamemodify(registry_path, ":h")
     if fn.isdirectory(dir) == 0 then
-        fn.mkdir(dir, "p")
+        local ok = pcall(fn.mkdir, dir, "p")
+        if not ok then
+            vim.notify("Failed to create project registry directory", vim.log.levels.WARN)
+            return
+        end
     end
-    local json = vim.json.encode(projects)
-    fn.writefile({ json }, registry_path)
+    local ok_encode, json = pcall(vim.json.encode, projects)
+    if not ok_encode then
+        vim.notify("Failed to encode project registry", vim.log.levels.WARN)
+        return
+    end
+    local ok_write = pcall(fn.writefile, { json }, registry_path)
+    if not ok_write then
+        vim.notify("Failed to write project registry", vim.log.levels.WARN)
+    end
 end
 
 ---@param root string
@@ -61,10 +100,27 @@ function M.add(root)
         end
     end
     local proj = M.new(root)
+    proj.open_count = 0
     projects[#projects + 1] = proj
     M.write(projects)
     vim.notify("Added project: " .. proj.name, vim.log.levels.INFO)
     return proj
+end
+
+---@param root string
+function M.increment_open(root)
+    local projects = M.read()
+    local updated = false
+    for _, p in ipairs(projects) do
+        if p.root == root then
+            p.open_count = (p.open_count or 0) + 1
+            updated = true
+            break
+        end
+    end
+    if updated then
+        M.write(projects)
+    end
 end
 
 ---@param root string
