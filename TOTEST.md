@@ -1,3 +1,32 @@
+## Registration keymap hidden inside registered projects
+
+When editing a file inside a registered project, the registration keymap
+(`register_keymap_lhs`, default `<kEnter>a`) should be disabled for that
+buffer. Outside registered projects, it should remain available.
+
+## ProjectHelp opens in equal vertical split
+
+Run `:ProjectHelp`. Help should open in a vertical split and window sizes
+should be equalized automatically (`wincmd =` behavior).
+
+## proj repo name normalized to proj.nvim
+
+When this plugin repo is registered via `:ProjectAdd`, its project name should
+show as `proj.nvim` (not `proj`) in `:ProjectSwitch` and lualine component.
+
+## ProjectTodo shows legacy/plain TODO files
+
+If `TODO.md` has plain lines (for example `- item` or `item`) without `##`
+headings, `:ProjectTodo` should still show those entries in the picker.
+Also verify opening a missing TODO file via `:ProjectTodo` creates the file
+and opens an empty picker.
+
+## Switching projects no longer closes other tabs
+
+When running `:ProjectSwitch`, restoring the selected project session should
+only reset the current tab. Other tabs and their windows should remain open.
+Verify with 3+ tabs open and switch projects repeatedly.
+
 ## Empty and missing list files handled gracefully
 
 `:ProjectTodo` (and any list picker) on a missing file should create an empty
@@ -96,3 +125,21 @@ in the tabline should update its `fg` color to match the mode accent. A
 Open a project, then open a new tab (`:tabnew`). The new tab should show
 the same project name in the tabline immediately, without needing to run
 `:ProjectSwitch`.
+
+## Error detected while processing BufEnter Autocommands for "*":
+
+Error executing lua callback: /home/flux/.config/nvim/lua/config/state.lua:120: attempt to call global 'oil_current_dir' (a nil value)
+stack traceback:
+        /home/flux/.config/nvim/lua/config/state.lua:120: in function 'buf_display_name'
+        /home/flux/.config/nvim/lua/config/state.lua:191: in function 'update_buffer'
+        /home/flux/.config/nvim/lua/config/state.lua:454: in function </home/flux/.config/nvim/lua/config/state.lua:453>
+
+## Sometimes the current ptoject per buffer is detected wrongly, displaying a directory that is not a root (no .git inside). For example this happens for the opencode TUI 
+
+## Sort projects by most frequently opened
+
+When using `:ProjectSwitch`, projects are sorted based on how many times they've been opened. Open several projects via `:ProjectSwitch` multiple times, and verify the ones you open most bubble up to the top of the list in subsequent `:ProjectSwitch` picker windows.
+
+## Toggle preview of all non-empty lists found in current project
+
+Use the `:ProjectPreviewLists` command or `<leader>pp` to toggle a floating preview window displaying all non-empty lists found in the current project's `.md` files. Ensure the window correctly toggles open and closed, handles empty states, and formats the contents with headers.

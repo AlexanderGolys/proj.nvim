@@ -1,4 +1,9 @@
 # proj.nvim
+@@@proj
+
+
+
+
 
 Tab-scoped project manager for Neovim. Each tab owns one project with its
 own working directory, session, and opencode instance. Projects are registered
@@ -16,8 +21,9 @@ with header/body preview.
 ### `:ProjectAdd`
 
 Register the current directory as a project. The directory must contain a
-`.git` folder. The project name is derived from the directory basename. If
-the project is already registered, a warning is shown. The registry is
+`.git` folder. The project name is derived from the directory basename, except
+this plugin's own repo which is normalized to `proj.nvim`. If the project is
+already registered, a warning is shown. The registry is
 written to `vim.fn.stdpath("data") .. "/proj_registry.json"` and persists
 across Neovim sessions.
 
@@ -67,6 +73,19 @@ Server discovery and process lifecycle are handled by opencode.nvim.
 
 See `OPENCODE_ZOMBIE.md` for a known issue with duplicate server processes
 across Neovim restarts.
+
+### `:ProjectHelp`
+
+Open plugin help in a vertical split and then equalize window sizes.
+
+## Setup Options
+
+`require("proj").setup({ ... })` supports:
+
+- `keymap_prefix` (default `"p"`) for plugin-owned `<leader>` keymaps.
+- `register_keymap_lhs` (default `"<kEnter>a"`): buffer-local disable target
+  for project registration keymaps when the current buffer is already inside a
+  registered project.
 
 ## Internals
 

@@ -1,12 +1,12 @@
 local M = {}
 
 -- @@@proj.init
--- ###nvim-plugin
+-- @##nvim-plugin
 --
--- |||proj.project|||
--- |||proj.session|||
--- |||proj.lists|||
--- |||proj.git|||
+-- /@@proj.project
+-- /@@proj.session
+-- /@@proj.lists
+-- /@@proj.git
 
 local project = require("proj.project")
 local session = require("proj.session")

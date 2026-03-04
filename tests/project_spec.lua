@@ -12,7 +12,7 @@ describe("proj.project", function()
 
     before_each(function()
         vim.fn.mkdir(tmp, "p")
-        vim.fn.mkdir(tmp .. "/.git", "p")
+        vim.fn.system({ "git", "init", tmp })
         -- Point the registry at a temp file for isolation.
         -- (Requires exposing registry_path or a test helper in project.lua)
     end)
@@ -26,6 +26,20 @@ describe("proj.project", function()
             local p = project.new(tmp)
             assert.equals(vim.fn.fnamemodify(tmp, ":t"), p.name)
             assert.equals(tmp, p.root)
+        end)
+
+        it("names this plugin repo as proj.nvim", function()
+            local proj_tmp = vim.fn.tempname()
+            vim.fn.mkdir(proj_tmp .. "/plugin", "p")
+            vim.fn.mkdir(proj_tmp .. "/lua/proj", "p")
+            vim.fn.writefile({ "-- test" }, proj_tmp .. "/plugin/proj.lua")
+            vim.fn.writefile({ "-- test" }, proj_tmp .. "/lua/proj/init.lua")
+
+            local p = project.new(proj_tmp)
+            assert.equals("proj.nvim", p.name)
+            assert.equals(proj_tmp, p.root)
+
+            vim.fn.delete(proj_tmp, "rf")
         end)
     end)
 
