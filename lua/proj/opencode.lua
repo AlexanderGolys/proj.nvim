@@ -1,34 +1,41 @@
-local M = {}
-
 -- @@@proj.opencode
 -- ###nvim-plugin
 
-local project = require("proj.project")
+---@class proj.OpenCodeService
+---@field registry_file string Path to persistent port registry.
+local OpenCode = {}
+OpenCode.__index = OpenCode
 
-local REGISTRY_FILE = vim.fn.stdpath("data") .. "/proj_opencode.json"
+---@return proj.OpenCodeService
+function OpenCode:new()
+    return setmetatable({ registry_file = vim.fn.stdpath("data") .. "/proj_opencode.json" }, self)
+end
 
+---@private
 ---@return table<string, integer>
-local function read_registry()
-    local f = io.open(REGISTRY_FILE, "r")
-    if not f then return {} end
-    local content = f:read("*a")
-    f:close()
+function OpenCode:read_registry()
+    local file = io.open(self.registry_file, "r")
+    if not file then return {} end
+    local content = file:read("*a")
+    file:close()
     if content == "" then return {} end
     local ok, parsed = pcall(vim.json.decode, content)
     return ok and parsed or {}
 end
 
+---@private
 ---@param data table<string, integer>
-local function write_registry(data)
-    local f = io.open(REGISTRY_FILE, "w")
-    if f then
-        f:write(vim.json.encode(data))
-        f:close()
+function OpenCode:write_registry(data)
+    local file = io.open(self.registry_file, "w")
+    if file then
+        file:write(vim.json.encode(data))
+        file:close()
     end
 end
 
+---@private
 ---@return integer
-local function get_free_port()
+function OpenCode:get_free_port()
     local server = vim.uv.new_tcp()
     server:bind("127.0.0.1", 0)
     local port = server:getsockname().port
@@ -36,9 +43,10 @@ local function get_free_port()
     return port
 end
 
+---@private
 ---@param port integer
 ---@param cb fun(is_open: boolean)
-local function check_port(port, cb)
+function OpenCode:check_port(port, cb)
     local client = vim.uv.new_tcp()
     client:connect("127.0.0.1", port, function(err)
         client:close()
@@ -46,60 +54,54 @@ local function check_port(port, cb)
     end)
 end
 
+---@private
 ---@param port integer
 ---@param cwd string
-local function start_server(port, cwd)
-    -- Start opencode in headless server mode
-    local cmd = { "opencode", "serve", "--port", tostring(port) }
-    vim.fn.jobstart(cmd, {
-        cwd = cwd,
-        detach = true,
-    })
+function OpenCode:start_server(port, cwd)
+    vim.fn.jobstart({ "opencode", "serve", "--port", tostring(port) }, { cwd = cwd, detach = true })
 end
 
-function M.toggle()
-    local cur = require("proj.init").current()
+---@private
+---@param port integer
+function OpenCode:attach(port)
+    local provider = require("opencode.config").provider
+    if not provider then
+        vim.notify("No opencode provider found", vim.log.levels.ERROR)
+        return
+    end
+    provider.cmd = "opencode attach http://127.0.0.1:" .. port .. " -c"
+    require("opencode").toggle()
+end
+
+function OpenCode:toggle()
+    local cur = require("proj").current()
     local root = cur and cur.root or "global"
     local cwd = cur and cur.root or vim.fn.getcwd()
-    
-    local reg = read_registry()
+    local reg = self:read_registry()
     local port = reg[root]
-
-    local function run_attach(p)
-        local provider = require("opencode.config").provider
-        if provider then
-            provider.cmd = "opencode attach http://127.0.0.1:" .. p .. " -c"
-            require("opencode").toggle()
-        else
-            vim.notify("No opencode provider found", vim.log.levels.ERROR)
-        end
+    local function ensure_attach(chosen)
+        reg[root] = chosen
+        self:write_registry(reg)
+        self:start_server(chosen, cwd)
+        vim.defer_fn(function() self:attach(chosen) end, 500)
     end
-
     if port then
-        check_port(port, vim.schedule_wrap(function(is_open)
+        self:check_port(port, vim.schedule_wrap(function(is_open)
             if is_open then
-                run_attach(port)
+                self:attach(port)
             else
-                -- Port is invalid, server died
-                local new_port = get_free_port()
-                reg[root] = new_port
-                write_registry(reg)
-                start_server(new_port, cwd)
-                -- Defer to let the server bind the port
-                vim.defer_fn(function()
-                    run_attach(new_port)
-                end, 500)
+                ensure_attach(self:get_free_port())
             end
         end))
     else
-        local new_port = get_free_port()
-        reg[root] = new_port
-        write_registry(reg)
-        start_server(new_port, cwd)
-        vim.defer_fn(function()
-            run_attach(new_port)
-        end, 500)
+        ensure_attach(self:get_free_port())
     end
 end
+
+---@type proj.OpenCodeService
+local service = OpenCode:new()
+local M = { OpenCode = OpenCode }
+
+function M.toggle() service:toggle() end
 
 return M

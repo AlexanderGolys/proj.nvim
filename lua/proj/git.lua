@@ -1,23 +1,30 @@
-local M = {}
-
 -- @@@proj.git
 -- ###nvim-plugin
 
-local fn = vim.fn
-local api = vim.api
+local fn, api = vim.fn, vim.api
 
----@param cmd string[]
----@param cwd string
----@return string, boolean ok
-local function run(cmd, cwd)
-    local full = vim.list_extend({ "git", "-C", cwd }, cmd)
-    local result = fn.system(full)
-    return vim.trim(result), vim.v.shell_error == 0
+---@class proj.GitService
+local Git = {}
+Git.__index = Git
+
+---@return proj.GitService
+function Git:new()
+    return setmetatable({}, self)
 end
 
+---@private
+---@param cmd string[]
 ---@param cwd string
-function M.status(cwd)
-    local out, ok = run({ "status", "--short" }, cwd)
+---@return string output
+---@return boolean ok
+function Git:run(cmd, cwd)
+    local out = fn.system(vim.list_extend({ "git", "-C", cwd }, cmd))
+    return vim.trim(out), vim.v.shell_error == 0
+end
+
+---@param cwd string Project root.
+function Git:status(cwd)
+    local out, ok = self:run({ "status", "--short" }, cwd)
     if not ok then
         vim.notify("git status failed", vim.log.levels.WARN)
         return
@@ -26,12 +33,9 @@ function M.status(cwd)
         vim.notify("Working tree clean", vim.log.levels.INFO)
         return
     end
-    local lines = vim.split(out, "\n", { plain = true })
     local items = {}
-    for _, line in ipairs(lines) do
-        if line ~= "" then
-            items[#items + 1] = { text = line }
-        end
+    for _, line in ipairs(vim.split(out, "\n", { plain = true })) do
+        if line ~= "" then items[#items + 1] = { text = line } end
     end
     Snacks.picker({
         title = "Git Status",
@@ -42,9 +46,9 @@ function M.status(cwd)
     })
 end
 
----@param cwd string
-function M.diff(cwd)
-    local out, ok = run({ "diff" }, cwd)
+---@param cwd string Project root.
+function Git:diff(cwd)
+    local out, ok = self:run({ "diff" }, cwd)
     if not ok then
         vim.notify("git diff failed", vim.log.levels.WARN)
         return
@@ -55,22 +59,13 @@ function M.diff(cwd)
     end
     local buf = api.nvim_create_buf(false, true)
     api.nvim_buf_set_lines(buf, 0, -1, false, vim.split(out, "\n", { plain = true }))
-    vim.bo[buf].filetype = "diff"
-    vim.bo[buf].modifiable = false
-    vim.bo[buf].bufhidden = "wipe"
-    Snacks.win({
-        buf = buf,
-        title = "Git Diff",
-        border = "rounded",
-        width = 0.85,
-        height = 0.85,
-        keys = { q = "close", ["<Esc>"] = "close" },
-    })
+    vim.bo[buf].filetype, vim.bo[buf].modifiable, vim.bo[buf].bufhidden = "diff", false, "wipe"
+    Snacks.win({ buf = buf, title = "Git Diff", border = "rounded", width = 0.85, height = 0.85, keys = { q = "close", ["<Esc>"] = "close" } })
 end
 
----@param cwd string
-function M.history(cwd)
-    local out, ok = run({ "log", "--oneline", "-50" }, cwd)
+---@param cwd string Project root.
+function Git:history(cwd)
+    local out, ok = self:run({ "log", "--oneline", "-50" }, cwd)
     if not ok or out == "" then
         vim.notify("No git history", vim.log.levels.INFO)
         return
@@ -89,56 +84,60 @@ function M.history(cwd)
         confirm = function(picker, item)
             picker:close()
             if item and item.hash then
-                local show, _ = run({ "show", "--stat", item.hash }, cwd)
+                local show = self:run({ "show", "--stat", item.hash }, cwd)
                 vim.notify(show, vim.log.levels.INFO)
             end
         end,
     })
 end
 
----@param cwd string
-function M.commit(cwd)
+---@param cwd string Project root.
+function Git:commit(cwd)
     Snacks.input({ prompt = "Commit message" }, function(msg)
         if not msg or msg == "" then return end
-        local _, ok = run({ "add", "-A" }, cwd)
-        if not ok then
+        local _, add_ok = self:run({ "add", "-A" }, cwd)
+        if not add_ok then
             vim.notify("git add failed", vim.log.levels.WARN)
             return
         end
-        local out, ok2 = run({ "commit", "-m", msg }, cwd)
-        if ok2 then
-            vim.notify(out, vim.log.levels.INFO)
-        else
-            vim.notify("git commit failed:\n" .. out, vim.log.levels.WARN)
-        end
+        local out, ok = self:run({ "commit", "-m", msg }, cwd)
+        vim.notify(ok and out or ("git commit failed:\n" .. out), ok and vim.log.levels.INFO or vim.log.levels.WARN)
     end)
 end
 
----@param cwd string
-function M.stash(cwd)
+---@param cwd string Project root.
+function Git:stash(cwd)
     Snacks.input({ prompt = "Stash message (empty = unnamed)" }, function(msg)
-        local cmd = msg and msg ~= "" and { "stash", "push", "-m", msg } or { "stash", "push" }
-        local out, ok = run(cmd, cwd)
-        if ok then
-            vim.notify(out ~= "" and out or "Stashed", vim.log.levels.INFO)
-        else
-            vim.notify("git stash failed:\n" .. out, vim.log.levels.WARN)
-        end
+        local out, ok = self:run(msg and msg ~= "" and { "stash", "push", "-m", msg } or { "stash", "push" }, cwd)
+        vim.notify(ok and (out ~= "" and out or "Stashed") or ("git stash failed:\n" .. out), ok and vim.log.levels.INFO or vim.log.levels.WARN)
     end)
 end
 
----@param cwd string
-function M.branch(cwd)
-    local current, _ = run({ "branch", "--show-current" }, cwd)
+---@param cwd string Project root.
+function Git:branch(cwd)
+    local current = self:run({ "branch", "--show-current" }, cwd)
     Snacks.input({ prompt = "New branch name", default = current .. "-" }, function(name)
         if not name or name == "" then return end
-        local out, ok = run({ "checkout", "-b", name }, cwd)
-        if ok then
-            vim.notify("Switched to branch: " .. name, vim.log.levels.INFO)
-        else
-            vim.notify("git checkout -b failed:\n" .. out, vim.log.levels.WARN)
-        end
+        local out, ok = self:run({ "checkout", "-b", name }, cwd)
+        vim.notify(ok and ("Switched to branch: " .. name) or ("git checkout -b failed:\n" .. out), ok and vim.log.levels.INFO or vim.log.levels.WARN)
     end)
 end
+
+---@type proj.GitService
+local service = Git:new()
+local M = { Git = Git }
+
+---@param cwd string
+function M.status(cwd) service:status(cwd) end
+---@param cwd string
+function M.diff(cwd) service:diff(cwd) end
+---@param cwd string
+function M.history(cwd) service:history(cwd) end
+---@param cwd string
+function M.commit(cwd) service:commit(cwd) end
+---@param cwd string
+function M.stash(cwd) service:stash(cwd) end
+---@param cwd string
+function M.branch(cwd) service:branch(cwd) end
 
 return M
