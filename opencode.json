@@ -10,24 +10,4 @@
    
   },
 
-  "mcp": {
-    "github": {
-      "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-github"
-      ],
-      "enabled": true
-    },
-    "fetch": {
-      "type": "local",
-      "command": [
-        "npx",
-        "-y",
-        "@modelcontextprotocol/server-fetch"
-      ],
-      "enabled": true
-    }
-  }
 }

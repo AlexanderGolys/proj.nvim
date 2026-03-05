@@ -28,7 +28,7 @@ describe("proj.project", function()
             assert.equals(tmp, p.root)
         end)
 
-        it("names this plugin repo as proj.nvim", function()
+        it("uses basename even for plugin repos", function()
             local proj_tmp = vim.fn.tempname()
             vim.fn.mkdir(proj_tmp .. "/plugin", "p")
             vim.fn.mkdir(proj_tmp .. "/lua/proj", "p")
@@ -36,7 +36,7 @@ describe("proj.project", function()
             vim.fn.writefile({ "-- test" }, proj_tmp .. "/lua/proj/init.lua")
 
             local p = project.new(proj_tmp)
-            assert.equals("proj.nvim", p.name)
+            assert.equals(vim.fn.fnamemodify(proj_tmp, ":t"), p.name)
             assert.equals(proj_tmp, p.root)
 
             vim.fn.delete(proj_tmp, "rf")

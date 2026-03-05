@@ -9,11 +9,6 @@ buffer. Outside registered projects, it should remain available.
 Run `:ProjectHelp`. Help should open in a vertical split and window sizes
 should be equalized automatically (`wincmd =` behavior).
 
-## proj repo name normalized to proj.nvim
-
-When this plugin repo is registered via `:ProjectAdd`, its project name should
-show as `proj.nvim` (not `proj`) in `:ProjectSwitch` and lualine component.
-
 ## ProjectTodo shows legacy/plain TODO files
 
 If `TODO.md` has plain lines (for example `- item` or `item`) without `##`

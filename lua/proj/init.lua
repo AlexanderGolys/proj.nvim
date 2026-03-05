@@ -266,24 +266,38 @@ function M.setup(opts)
         add_to_list(filename, vim.fn.fnamemodify(filename, ":r"))
     end, { nargs = 1, desc = "Add item to a project list file" })
 
-    vim.api.nvim_create_user_command("ProjectTodo",    function() pick_list("TODO.md",    "TODO")    end, { desc = "Pick TODO items" })
-    vim.api.nvim_create_user_command("ProjectBugs",    function() pick_list("BUGS.md",    "BUGS")    end, { desc = "Pick BUGS items" })
-    vim.api.nvim_create_user_command("ProjectTotest",  function() pick_list("TOTEST.md",  "TOTEST")  end, { desc = "Pick TOTEST items" })
-    vim.api.nvim_create_user_command("ProjectRemember",function() pick_list("REMEMBER.md","REMEMBER")end, { desc = "Pick REMEMBER items" })
-
-    vim.api.nvim_create_user_command("ProjectAddTodo",    function() add_to_list("TODO.md",    "TODO")    end, { desc = "Add TODO item" })
-    vim.api.nvim_create_user_command("ProjectAddBug",     function() add_to_list("BUGS.md",    "BUG")     end, { desc = "Add BUG item" })
-    vim.api.nvim_create_user_command("ProjectAddTotest",  function() add_to_list("TOTEST.md",  "TOTEST")  end, { desc = "Add TOTEST item" })
-    vim.api.nvim_create_user_command("ProjectAddRemember",function() add_to_list("REMEMBER.md","REMEMBER")end, { desc = "Add REMEMBER item" })
+    -- Shorthand list commands (pick and add)
+    local list_commands = {
+        { "ProjectTodo", "TODO.md", "TODO" },
+        { "ProjectBugs", "BUGS.md", "BUGS" },
+        { "ProjectTotest", "TOTEST.md", "TOTEST" },
+        { "ProjectRemember", "REMEMBER.md", "REMEMBER" },
+    }
+    for _, cmd in ipairs(list_commands) do
+        local name, file, title = cmd[1], cmd[2], cmd[3]
+        vim.api.nvim_create_user_command(name, function() pick_list(file, title) end,
+            { desc = "Pick " .. title .. " items" })
+        vim.api.nvim_create_user_command("ProjectAdd" .. name:sub(8), function() add_to_list(file, title) end,
+            { desc = "Add " .. title .. " item" })
+    end
 
     vim.api.nvim_create_user_command("ProjectGlobalList", function(cmd)
         local filename = cmd.args
         lists.pick_global(project.read(), filename, vim.fn.fnamemodify(filename, ":r"))
     end, { nargs = 1, desc = "Pick items from a list across all projects" })
 
-    vim.api.nvim_create_user_command("ProjectGlobalTodo",   function() lists.pick_global(project.read(), "TODO.md",   "TODO")   end, { desc = "Global TODO picker" })
-    vim.api.nvim_create_user_command("ProjectGlobalBugs",   function() lists.pick_global(project.read(), "BUGS.md",   "BUGS")   end, { desc = "Global BUGS picker" })
-    vim.api.nvim_create_user_command("ProjectGlobalTotest", function() lists.pick_global(project.read(), "TOTEST.md", "TOTEST") end, { desc = "Global TOTEST picker" })
+    -- Global shorthand list commands (pick only)
+    local global_list_commands = {
+        { "TODO.md", "TODO" },
+        { "BUGS.md", "BUGS" },
+        { "TOTEST.md", "TOTEST" },
+    }
+    for _, cmd in ipairs(global_list_commands) do
+        local file, title = cmd[1], cmd[2]
+        vim.api.nvim_create_user_command("ProjectGlobal" .. title, function()
+            lists.pick_global(project.read(), file, title)
+        end, { desc = "Global " .. title .. " picker" })
+    end
 
     vim.api.nvim_create_user_command("ProjectGlobalKeymaps", function() lists.pick_own("KEYMAPS.md",  "KEYMAPS")  end, { desc = "Global KEYMAPS list" })
     vim.api.nvim_create_user_command("ProjectGlobalRemember",function() lists.pick_own("REMEMBER.md", "REMEMBER") end, { desc = "Global REMEMBER list" })
@@ -300,9 +314,19 @@ function M.setup(opts)
         lists.add_to_any_project_list(project.read())
     end, { desc = "Add item to any list in any project" })
 
-    vim.api.nvim_create_user_command("ProjectGlobalAddTodo",   function() lists.add_to_project(project.read(), "TODO.md",   "TODO")   end, { desc = "Add TODO to any project" })
-    vim.api.nvim_create_user_command("ProjectGlobalAddBug",    function() lists.add_to_project(project.read(), "BUGS.md",   "BUG")    end, { desc = "Add BUG to any project" })
-    vim.api.nvim_create_user_command("ProjectGlobalAddTotest", function() lists.add_to_project(project.read(), "TOTEST.md", "TOTEST") end, { desc = "Add TOTEST to any project" })
+    -- Global shorthand add commands
+    local global_add_commands = {
+        { "TODO.md", "TODO" },
+        { "BUGS.md", "BUG" },
+        { "TOTEST.md", "TOTEST" },
+    }
+    for _, cmd in ipairs(global_add_commands) do
+        local file, title = cmd[1], cmd[2]
+        local cmd_name = title == "BUG" and "ProjectGlobalAddBug" or ("ProjectGlobalAdd" .. title)
+        vim.api.nvim_create_user_command(cmd_name, function()
+            lists.add_to_project(project.read(), file, title)
+        end, { desc = "Add " .. title .. " to any project" })
+    end
 
     -- ── Issue commands (JSON-based) ───────────────────────────────────────────
 
@@ -333,24 +357,23 @@ function M.setup(opts)
 
     -- @@@proj.git.commands
 
-    vim.api.nvim_create_user_command("ProjectGitStatus",  function()
-        local cur = M.current(); if cur then git.status(cur.root)  end
-    end, { desc = "Git status for current project" })
-    vim.api.nvim_create_user_command("ProjectGitDiff",    function()
-        local cur = M.current(); if cur then git.diff(cur.root)    end
-    end, { desc = "Git diff for current project" })
-    vim.api.nvim_create_user_command("ProjectGitHistory", function()
-        local cur = M.current(); if cur then git.history(cur.root) end
-    end, { desc = "Git history for current project" })
-    vim.api.nvim_create_user_command("ProjectGitCommit",  function()
-        local cur = M.current(); if cur then git.commit(cur.root)  end
-    end, { desc = "Git commit for current project" })
-    vim.api.nvim_create_user_command("ProjectGitStash",   function()
-        local cur = M.current(); if cur then git.stash(cur.root)   end
-    end, { desc = "Git stash for current project" })
-    vim.api.nvim_create_user_command("ProjectGitBranch",  function()
-        local cur = M.current(); if cur then git.branch(cur.root)  end
-    end, { desc = "Git new branch for current project" })
+    -- Git commands
+    local git_commands = {
+        { "Status", "Git status for current project" },
+        { "Diff", "Git diff for current project" },
+        { "History", "Git history for current project" },
+        { "Commit", "Git commit for current project" },
+        { "Stash", "Git stash for current project" },
+        { "Branch", "Git new branch for current project" },
+    }
+    for _, cmd in ipairs(git_commands) do
+        local name, desc = cmd[1], cmd[2]
+        local method = name:lower()
+        vim.api.nvim_create_user_command("ProjectGit" .. name, function()
+            local cur = M.current()
+            if cur then git[method](cur.root) end
+        end, { desc = desc })
+    end
 
     vim.api.nvim_create_user_command("ProjectOpenCode", function()
         local cur = M.current()

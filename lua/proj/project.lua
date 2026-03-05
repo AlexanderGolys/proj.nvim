@@ -1,6 +1,6 @@
 local M = {}
 
--- @@@proj.project
+-- @@@proj
 -- ###nvim-plugin
 
 local fn = vim.fn
@@ -13,27 +13,11 @@ local fn = vim.fn
 local registry_path = fn.stdpath("data") .. "/proj_registry.json"
 
 ---@param root string
----@return boolean
-local function is_proj_repo(root)
-    return fn.filereadable(root .. "/plugin/proj.lua") == 1
-        and fn.filereadable(root .. "/lua/proj/init.lua") == 1
-end
-
----@param root string
----@return string
-local function project_name(root)
-    if is_proj_repo(root) then
-        return "proj.nvim"
-    end
-    return fn.fnamemodify(root, ":t")
-end
-
----@param root string
 ---@return proj.Project
 function M.new(root)
     return {
         root = root,
-        name = project_name(root),
+        name = fn.fnamemodify(root, ":t"),
     }
 end
 
@@ -49,17 +33,6 @@ function M.read()
     local ok2, data = pcall(vim.json.decode, table.concat(raw, "\n"))
     if not ok2 or type(data) ~= "table" then
         return {}
-    end
-    local changed = false
-    for _, p in ipairs(data) do
-        local normalized = project_name(p.root)
-        if p.name ~= normalized then
-            p.name = normalized
-            changed = true
-        end
-    end
-    if changed then
-        M.write(data)
     end
     return data
 end

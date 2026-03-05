@@ -1,5 +1,5 @@
 local M = {}
-return M
+
 -- @@@proj.opencode
 -- ###nvim-plugin
 

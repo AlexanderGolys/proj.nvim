@@ -28,26 +28,36 @@ Manual smoke-test in Neovim with the plugin on `runtimepath`:
 - `:ProjectAddItem <file>` -- generic add item via input prompt
 - `:ProjectTodo` / `:ProjectBugs` / `:ProjectTotest` -- shorthand list pickers
 - `:ProjectAddTodo` / `:ProjectAddBug` / `:ProjectAddTotest` -- shorthand add
+- `:ProjectGlobalTodo` / `:ProjectGlobalBugs` / `:ProjectGlobalTotest` -- cross-project pickers
+- `:ProjectGlobalAddTodo` / etc. -- add to any project's list
+- `:ProjectGlobalKeymaps` / `:ProjectGlobalRemember` -- global-only lists
+- `:ProjectIssues` / `:ProjectIssuesTodo` -- JSON-based issue tracking
+- `:ProjectIssuesGlobal` / `:ProjectIssuesTodoGlobal` -- cross-project issues
+- `:ProjectGitStatus` / `:ProjectGitDiff` / `:ProjectGitHistory` -- git operations
+- `:ProjectGitCommit` / `:ProjectGitStash` / `:ProjectGitBranch` -- more git ops
 - `:ProjectOpenCode` -- toggle opencode terminal for current project
+- `:ProjectHelp` -- open plugin help in equal vertical split
+- `:ProjectPreviewLists` -- toggle floating preview of all project lists
 
 ## Plugin structure
 
 ```
-plugin/proj.lua     Auto-sourced entrypoint; calls setup({}) if not yet loaded
+plugin/proj.lua      Auto-sourced entrypoint; calls setup({}) if not yet loaded
 lua/proj/
-    init.lua        setup(opts), commands, keymaps, tab <-> project mapping
-    project.lua     Project class, persistent registry (read/write/add/remove)
-    session.lua     Per-project + global session save/restore
-    lists.lua       Parse/pick/add markdown lists; project-independent global lists
-    git.lua         Thin git wrappers (status, diff, history, commit, stash, branch)
+    init.lua         setup(opts), commands, keymaps, tab <-> project mapping
+    project.lua      Project class, persistent registry (read/write/add/remove)
+    session.lua      Per-project + global session save/restore
+    lists.lua        Parse/pick/add markdown lists; cross-project aggregation
+    git.lua          Thin git wrappers (status, diff, history, commit, stash, branch)
+    issues.lua       JSON-based issue tracking (.issues/{bugs,todos}.json)
+    opencode.lua     Opencode terminal toggling per-project
 tests/
     project_spec.lua
     lists_spec.lua
 ```
 
-`project.lua`, `lists.lua`, `session.lua`, and `git.lua` are leaves (no
-internal requires). `init.lua` requires all four. `plugin/proj.lua` requires
-only `proj` (the init module).
+All modules are leaves (no internal requires). `init.lua` requires all.
+`plugin/proj.lua` requires only `proj` (the init module).
 
 ## Fluxtags
 

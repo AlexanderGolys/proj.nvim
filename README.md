@@ -1,15 +1,11 @@
 # proj.nvim
-@@@proj
 
 
-
-
-
-Tab-scoped project manager for Neovim. Each tab owns one project with its
-own working directory, session, and opencode instance. Projects are registered
-from git repos and persisted across restarts. Any markdown file with `##`
-headings in the project root becomes a browsable list through snacks pickers
-with header/body preview.
+Tab-scoped project manager for Neovim. Each tab owns one project with its own
+working directory, session, and opencode instance. Projects are registered from
+git repos and persisted across restarts. Markdown files with `##` headings become
+browsable lists with preview. Includes git operations, JSON issue tracking, and
+cross-project aggregation.
 
 ## Dependencies
 
@@ -18,65 +14,83 @@ with header/body preview.
 
 ## Commands
 
-### `:ProjectAdd`
+### Project Management
 
-Register the current directory as a project. The directory must contain a
-`.git` folder. The project name is derived from the directory basename, except
-this plugin's own repo which is normalized to `proj.nvim`. If the project is
-already registered, a warning is shown. The registry is
-written to `vim.fn.stdpath("data") .. "/proj_registry.json"` and persists
-across Neovim sessions.
+**`:ProjectAdd`** — Register current directory as a project (requires `.git`).
+Project name is the directory basename. Registry saved to `stdpath("data")/proj_registry.json`.
 
-### `:ProjectSwitch`
+**`:ProjectSwitch`** — Open picker of all registered projects, sorted by open frequency.
+Selecting a project switches to it: sets tab-local CWD, restores session, or opens explorer.
+Previous project's session saved automatically.
 
-Open a snacks picker listing all registered projects. Pressing `<CR>` on
-an entry opens that project in the current tab: sets `tcd` to the project
-root, restores the saved session (if one exists), or falls back to opening
-the root directory (via the user's default file explorer). The previous
-project's session is saved automatically before switching.
+### Lists (Markdown with `##` headings)
 
-### `:ProjectList <file>`
+**`:ProjectList <file>`** — Pick items from a markdown file (any `.md` in project root).
+Each `## Heading` becomes a picker item; body text shown as preview. Enter opens file at heading.
 
-Generic list picker. Takes a filename relative to the project root (e.g.
-`TODO.md`, `IDEAS.md`, `GOALS.md`). Parses the file by `## ` headings --
-each heading becomes a picker item, and the body text between headings is
-shown as a preview. Pressing `<CR>` opens the file at that heading's line.
+**`:ProjectAddItem <file>`** — Add new item to a markdown file (creates file if missing).
 
-The shorthand commands are equivalent to:
+**Shorthand commands:**
 
-| Shorthand          | Equivalent                  |
-|--------------------|-----------------------------|
-| `:ProjectTodo`     | `:ProjectList TODO.md`      |
-| `:ProjectBugs`     | `:ProjectList BUGS.md`      |
-| `:ProjectTotest`   | `:ProjectList TOTEST.md`    |
+| Command | Equivalent |
+|---------|-----------|
+| `:ProjectTodo` | `:ProjectList TODO.md` |
+| `:ProjectBugs` | `:ProjectList BUGS.md` |
+| `:ProjectTotest` | `:ProjectList TOTEST.md` |
+| `:ProjectRemember` | `:ProjectList REMEMBER.md` |
+| `:ProjectAddTodo` | `:ProjectAddItem TODO.md` |
+| `:ProjectAddBug` | `:ProjectAddItem BUGS.md` |
+| `:ProjectAddTotest` | `:ProjectAddItem TOTEST.md` |
+| `:ProjectAddRemember` | `:ProjectAddItem REMEMBER.md` |
 
-### `:ProjectAddItem <file>`
+### Cross-Project Lists
 
-Generic add item. Takes a filename relative to the project root. Opens a
-snacks input prompt. The entered text becomes a new `## heading` appended
-to the file. If the file does not exist it is created.
+**`:ProjectGlobalList <file>`** — Aggregate list items across all projects into one picker.
+Each item prefixed with project name.
 
-The shorthand commands are equivalent to:
+**`:ProjectGlobalTodo`** / **`:ProjectGlobalBugs`** / **`:ProjectGlobalTotest`** — Shorthand global pickers.
 
-| Shorthand             | Equivalent                     |
-|-----------------------|--------------------------------|
-| `:ProjectAddTodo`     | `:ProjectAddItem TODO.md`      |
-| `:ProjectAddBug`      | `:ProjectAddItem BUGS.md`      |
-| `:ProjectAddTotest`   | `:ProjectAddItem TOTEST.md`    |
+**`:ProjectGlobalAddItem <file>`** — Pick a project, then add item to its file.
 
-### `:ProjectOpenCode`
+**`:ProjectGlobalAddTodo`** / **`:ProjectGlobalAddBug`** / **`:ProjectGlobalAddTotest`** — Shorthand add.
 
-Toggle the opencode terminal for the current project. Ensures `tcd` is set
-to the project root, then calls `require("opencode").toggle()`. Because
-each tab has its own CWD, opencode scopes to the correct project directory.
-Server discovery and process lifecycle are handled by opencode.nvim.
+**`:ProjectGlobalAddAnyItem`** — Interactively choose project and list file, then add.
 
-See `OPENCODE_ZOMBIE.md` for a known issue with duplicate server processes
-across Neovim restarts.
+### Global-Only Lists
 
-### `:ProjectHelp`
+**`:ProjectGlobalKeymaps`** / **`:ProjectGlobalRemember`** — View global lists stored in `stdpath("data")/proj_lists/`.
 
-Open plugin help in a vertical split and then equalize window sizes.
+**`:ProjectGlobalAddKeymaps`** / **`:ProjectGlobalAddRemember`** — Add to global lists.
+
+### Issues (JSON-based)
+
+**`:ProjectIssues`** — Pick bugs from `.issues/bugs.json`.
+
+**`:ProjectIssuesTodo`** — Pick todos from `.issues/todos.json`.
+
+**`:ProjectIssuesGlobal`** / **`:ProjectIssuesTodoGlobal`** — Cross-project issue pickers.
+
+### Git Operations
+
+**`:ProjectGitStatus`** — Show `git status --short` in a picker.
+
+**`:ProjectGitDiff`** — Show `git diff` in a picker.
+
+**`:ProjectGitHistory`** — Show `git log` in a picker.
+
+**`:ProjectGitCommit`** — Stage/commit workflow via picker.
+
+**`:ProjectGitStash`** — Stash/pop workflow.
+
+**`:ProjectGitBranch`** — Create or switch branches.
+
+### Utilities
+
+**`:ProjectOpenCode`** — Toggle opencode terminal scoped to current project (or global if no project).
+
+**`:ProjectHelp`** — Open plugin help in equal vertical split.
+
+**`:ProjectPreviewLists`** — Toggle floating preview of all non-empty `.md` lists in project root.
 
 ## Setup Options
 
@@ -87,64 +101,65 @@ Open plugin help in a vertical split and then equalize window sizes.
   for project registration keymaps when the current buffer is already inside a
   registered project.
 
-## Internals
+## Architecture
 
-The plugin is split into four modules under `lua/proj/`.
+Seven modules under `lua/proj/`:
 
-### `init.lua`
+**`init.lua`** — Entry point. Wires all commands, keymaps, and autocmds.
+Maintains tab→project mapping, handles project switching, session save/restore.
 
-Entry point. `M.setup(opts)` creates all user commands and sets up autocmds
-for session save on `VimLeavePre` and tab cleanup on `TabClosed`. Maintains
-a `tabpage -> Project` map so each tab knows its active project. The generic
-`:ProjectList` and `:ProjectAddItem` commands live here; shorthand commands
-(`:ProjectTodo`, etc.) are thin wrappers that pass the filename.
+**`project.lua`** — Project registry (JSON at `stdpath("data")/proj_registry.json`).
+Functions: `new(root)`, `read()`, `add(root)`, `remove(root)`, `write()`, `find_git_root()`.
+Tracks open counts for project frequency sorting.
 
-### `project.lua`
+**`session.lua`** — Saves/restores sessions per-project and global.
+Files under `stdpath("data")/proj_sessions/`. Fallback to `vim.cmd.edit(root)`.
 
-Defines the `proj.Project` class (fields: `root`, `name`) and the persistent
-registry. The registry is a JSON file at `stdpath("data")/proj_registry.json`.
-Public functions: `new(root)`, `read()`, `add(root)`, `remove(root)`,
-`write(projects)`, `find_git_root(path)`.
+**`lists.lua`** — Parses markdown by `## ` headings into items.
+Functions: `parse()`, `pick()` (snacks picker), `add()`, and cross-project aggregators.
 
-### `session.lua`
+**`git.lua`** — Thin wrappers around `git` commands.
+Functions: `status()`, `diff()`, `history()`, `commit()`, `stash()`, `branch()`.
 
-Handles `mksession` / `source` for per-project and global sessions. Session
-files live under `stdpath("data")/proj_sessions/`. `save(name)` writes the
-current session, `restore(name, root)` loads it. When no session file exists,
-falls back to `vim.cmd.edit(root)` which opens the directory in whatever
-explorer the user has configured. Also saves/restores a global session
-(`_global.vim`) used when no project is active.
+**`issues.lua`** — JSON-based issue tracking (`.issues/{bugs,todos}.json`).
+Functions: `pick()`, `pick_global()` for cross-project aggregation.
 
-### `lists.lua`
+**`opencode.lua`** — Toggles opencode terminal scoped to project directory.
 
-Reads any markdown file and splits it into items by `## ` headings. Each item
-has a `header`, `body` (lines until the next heading), and `lnum`. `parse()`
-returns the raw items, `pick()` opens a snacks picker with body as preview,
-`add()` appends a new heading entry to the file.
+## Integration
 
-## Extending
+### Lualine Tabline Component
 
-Seven directions the plugin could grow:
+Show current project name in tabline:
 
-1. **Project-scoped marks and bookmarks** -- save per-project named file
-   positions, restore them on project switch, expose via picker.
+```lua
+require("lualine").setup({
+    tabline = {
+        lualine_a = {
+            { require("proj").lualine_component },
+        },
+        lualine_b = {
+            { "buffers" },
+        },
+    },
+})
+```
 
-2. **Cross-project overview** -- aggregate lists across all registered
-   projects into a single picker, grouped by project name.
+### Keymaps
 
-3. **Git context panel** -- floating window showing branch, recent commits,
-   dirty file count, stash list for the current project.
+Default keymaps under `<leader>p`:
 
-4. **Project templates** -- register directory templates (e.g. for Lua
-   plugins, Rust crates); `:ProjectNew` scaffolds a new project from a
-   template and registers it.
+- `<leader>pa` — Add item to any list in any project
+- `<leader>pp` — Preview all lists in current project
 
-5. **Statusline / tabline integration** -- expose `project_name()` and
-   `project_status()` functions for lualine or custom tabline rendering.
+Configurable prefix via `require("proj").setup({ keymap_prefix = "..." })`.
 
-6. **List item actions** -- delete, reorder, or move items between lists
-   (e.g. promote a TODO to a BUG) directly from the picker.
+## Design
 
-7. **Opencode prompt helpers** -- pre-built prompts scoped to the project
-   (e.g. "fix all TODOs", "review BUGS.md") that feed project context into
-   opencode automatically.
+- **One project per tab** — Each tab maps to one project via `tabpage -> Project` table.
+- **Registry** — Persisted in JSON at `stdpath("data")/proj_registry.json`.
+- **Sessions** — Per-project under `stdpath("data")/proj_sessions/`, global `_global.vim`.
+- **Lists** — Any `.md` with `##` headings in project root becomes a browsable list.
+- **Auto-detect** — On startup or tab entry, project auto-detected from current directory.
+- **CWD sync** — Tab-local CWD (`tcd`) always matches project root.
+- **Modules are leaves** — No circular requires; all modules independent except `init.lua`.
