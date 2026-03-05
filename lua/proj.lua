@@ -15,8 +15,8 @@ local git = require("proj.git")
 -- /@@proj.opencode
 
 ---@class proj.Config
----@field keymap_prefix string Leader suffix used by plugin keymaps.
----@field register_keymap_lhs string LHS to disable in registered project buffers.
+---@field keymap_prefix? string Leader suffix used by plugin keymaps.
+---@field register_keymap_lhs? string LHS to disable in registered project buffers.
 
 ---@class proj.App
 ---@field cfg proj.Config
@@ -158,9 +158,9 @@ end
 ---@private
 function App:setup_commands()
     vim.api.nvim_create_user_command("ProjectHelp", function()
-        local ok = pcall(vim.cmd, "vert help proj.nvim")
-        if not ok then pcall(vim.cmd, "vert help proj") end
-        pcall(vim.cmd, "wincmd =")
+        local ok = pcall(function() vim.cmd("vert help proj.nvim") end)
+        if not ok then pcall(function() vim.cmd("vert help proj") end) end
+        pcall(function() vim.cmd("wincmd =") end)
     end, { desc = "Open proj help in an equal vertical split" })
 
     vim.api.nvim_create_user_command("ProjectAdd", function()
