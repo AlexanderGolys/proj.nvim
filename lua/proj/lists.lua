@@ -2,6 +2,7 @@
 -- ###nvim-plugin
 
 local fn, api = vim.fn, vim.api
+local utils = require("proj.utils")
 
 ---@class proj.ListItem
 ---@field header string Heading text without `##`.
@@ -27,11 +28,8 @@ end
 ---@param filepath string
 ---@return proj.ListItem[]
 function Lists:parse(filepath)
-    if fn.filereadable(filepath) ~= 1 then
-        return {}
-    end
-    local ok, lines = pcall(fn.readfile, filepath)
-    if not ok then
+    local lines = utils.read_lines(filepath)
+    if #lines == 0 and fn.filereadable(filepath) ~= 1 then
         return {}
     end
     local items, current, saw_heading = {}, nil, false
@@ -80,9 +78,7 @@ function Lists:delete_item(filepath, header)
             end
         end
     end
-    if not pcall(fn.writefile, out, filepath) then
-        vim.notify("Failed to rewrite list file", vim.log.levels.WARN)
-    end
+    utils.write_lines(filepath, out, "list file rewrite")
 end
 
 ---@private
@@ -98,27 +94,16 @@ function Lists:move_item(item, src, dst, annotation)
     if annotation and annotation ~= "" then
         entry[#entry + 1] = annotation
     end
-    if fn.filereadable(dst) == 1 then
-        local ok, existing = pcall(fn.readfile, dst)
-        if ok then
-            content = existing
-        end
-    end
+    content = utils.read_lines(dst)
     if #content > 0 then
         content[#content + 1] = ""
     end
     vim.list_extend(content, entry)
-    local dir = fn.fnamemodify(dst, ":h")
-    if fn.isdirectory(dir) == 0 and not pcall(fn.mkdir, dir, "p") then
-        vim.notify("Failed to create destination directory", vim.log.levels.WARN)
-        return
-    end
-    if not pcall(fn.writefile, content, dst) then
-        vim.notify("Failed to write to destination list", vim.log.levels.WARN)
+    if not utils.write_lines(dst, content, "destination list") then
         return
     end
     self:delete_item(src, item.header)
-    vim.notify("Moved '" .. item.header .. "' -> " .. fn.fnamemodify(dst, ":t"), vim.log.levels.INFO)
+    utils.info("Moved '" .. item.header .. "' -> " .. fn.fnamemodify(dst, ":t"))
 end
 
 ---@private
@@ -164,14 +149,8 @@ end
 ---@param title string
 ---@param project_root? string
 function Lists:pick(filepath, title, project_root)
-    local dir = fn.fnamemodify(filepath, ":h")
     if fn.filereadable(filepath) ~= 1 then
-        if fn.isdirectory(dir) == 0 and not pcall(fn.mkdir, dir, "p") then
-            vim.notify("Failed to create list directory", vim.log.levels.WARN)
-            return
-        end
-        if not pcall(fn.writefile, {}, filepath) then
-            vim.notify("Failed to create list file", vim.log.levels.WARN)
+        if not utils.write_lines(filepath, {}, "list file") then
             return
         end
     end
@@ -215,7 +194,7 @@ function Lists:pick(filepath, title, project_root)
                 if not item then return end
                 picker:close()
                 self:delete_item(filepath, item._item.header)
-                vim.notify("Deleted '" .. item._item.header .. "'", vim.log.levels.INFO)
+                utils.info("Deleted '" .. item._item.header .. "'")
                 reopen()
             end,
             list_move = function(picker, item)
@@ -275,7 +254,7 @@ end
 ---@param title string
 function Lists:add_to_project(projects, filename, title)
     if #projects == 0 then
-        vim.notify("No projects registered", vim.log.levels.WARN)
+        utils.notify("No projects registered")
         return
     end
     local items = {}
@@ -301,7 +280,7 @@ end
 ---@param projects proj.Project[]
 function Lists:add_to_any_project_list(projects)
     if #projects == 0 then
-        vim.notify("No projects registered", vim.log.levels.WARN)
+        utils.notify("No projects registered")
         return
     end
     local items = {}
@@ -366,13 +345,7 @@ function Lists:add(filepath, text)
     if #lines == 0 or lines[1] == "" then
         return
     end
-    local existing = {}
-    if fn.filereadable(filepath) == 1 then
-        local ok, content = pcall(fn.readfile, filepath)
-        if ok then
-            existing = content
-        end
-    end
+    local existing = utils.read_lines(filepath)
     if #existing > 0 then
         existing[#existing + 1] = ""
     end
@@ -380,15 +353,10 @@ function Lists:add(filepath, text)
     for i = 2, #lines do
         existing[#existing + 1] = lines[i]
     end
-    local dir = fn.fnamemodify(filepath, ":h")
-    if fn.isdirectory(dir) == 0 and not pcall(fn.mkdir, dir, "p") then
-        vim.notify("Failed to create list directory", vim.log.levels.WARN)
-        return
-    end
-    if pcall(fn.writefile, existing, filepath) then
-        vim.notify("Added to " .. fn.fnamemodify(filepath, ":t"), vim.log.levels.INFO)
+    if utils.write_lines(filepath, existing, "list file") then
+        utils.info("Added to " .. fn.fnamemodify(filepath, ":t"))
     else
-        vim.notify("Failed to write to list file", vim.log.levels.WARN)
+        utils.notify("Failed to write to list file")
     end
 end
 
@@ -415,7 +383,7 @@ function Lists:toggle_preview(project_root)
         end
     end
     if #lines == 0 then
-        vim.notify("No non-empty lists found", vim.log.levels.INFO)
+        utils.info("No non-empty lists found")
         return
     end
     local buf = api.nvim_create_buf(false, true)

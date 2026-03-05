@@ -1,155 +1,212 @@
 local fn = vim.fn
+local utils = require("proj.utils")
 
 -- @@@proj.project
 -- @##proj
 
+---@class proj.Project
+---@field root string
+---@field name string
+---@field open_count integer
 
-
----@class proj.ProjectRegistry
+---@class proj.ProjectList
 ---@field path string Absolute path to `proj_registry.json`.
-local Registry = {}
-Registry.__index = Registry
+---@field projects proj.Project[]
+---@field by_root table<string, integer>
+local ProjectList = {}
+ProjectList.__index = ProjectList
 
----@return proj.ProjectRegistry
-function Registry:new()
-    return setmetatable({ path = fn.stdpath("data") .. "/proj_registry.json" }, self)
+---@private
+---@param entry table
+---@return proj.Project?
+local function normalize_project(entry)
+  if type(entry) ~= "table" or type(entry.root) ~= "string" or entry.root == "" then
+    return nil
+  end
+  local count = tonumber(entry.open_count) or 0
+  if count < 0 then
+    count = 0
+  end
+  return {
+    root = entry.root,
+    name = (type(entry.name) == "string" and entry.name ~= "") and entry.name or fn.fnamemodify(entry.root, ":t"),
+    open_count = math.floor(count),
+  }
+end
+
+---@private
+function ProjectList:reindex()
+  self.by_root = {}
+  for idx, proj in ipairs(self.projects) do
+    self.by_root[proj.root] = idx
+  end
+end
+
+---@param path? string
+---@return proj.ProjectList
+function ProjectList:new(path)
+  local instance = setmetatable({
+    path = path or (fn.stdpath("data") .. "/proj_registry.json"),
+    projects = {},
+    by_root = {},
+  }, self)
+  instance:reload()
+  return instance
 end
 
 ---@param root string
 ---@return proj.Project
-function Registry:new_project(root)
-    return { root = root, name = fn.fnamemodify(root, ":t"), open_count = 0 }
+function ProjectList:new_project(root)
+  return { root = root, name = fn.fnamemodify(root, ":t"), open_count = 0 }
 end
 
 ---@return proj.Project[]
-function Registry:read()
-    if fn.filereadable(self.path) ~= 1 then
-        return {}
+function ProjectList:reload()
+  local raw = utils.read_json(self.path)
+  self.projects = {}
+  for _, entry in ipairs(raw) do
+    local proj = normalize_project(entry)
+    if proj then
+      self.projects[#self.projects + 1] = proj
     end
-    local ok, raw = pcall(fn.readfile, self.path)
-    if not ok or #raw == 0 then
-        return {}
-    end
-    local ok_decode, data = pcall(vim.json.decode, table.concat(raw, "\n"))
-    return ok_decode and type(data) == "table" and data or {}
+  end
+  self:reindex()
+  return vim.deepcopy(self.projects)
+end
+
+---@return proj.Project[]
+function ProjectList:all()
+  return vim.deepcopy(self.projects)
 end
 
 ---@param data proj.Project[]
-function Registry:write(data)
-    local dir = fn.fnamemodify(self.path, ":h")
-    if fn.isdirectory(dir) == 0 and not pcall(fn.mkdir, dir, "p") then
-        vim.notify("Failed to create project registry directory", vim.log.levels.WARN)
-        return
+function ProjectList:set(data)
+  self.projects = {}
+  for _, entry in ipairs(data) do
+    local proj = normalize_project(entry)
+    if proj then
+      self.projects[#self.projects + 1] = proj
     end
-    local ok_encode, json = pcall(vim.json.encode, data)
-    if not ok_encode then
-        vim.notify("Failed to encode project registry", vim.log.levels.WARN)
-        return
-    end
-    if not pcall(fn.writefile, { json }, self.path) then
-        vim.notify("Failed to write project registry", vim.log.levels.WARN)
-    end
+  end
+  self:reindex()
+  self:save()
+end
+
+function ProjectList:save()
+  utils.write_json(self.path, self.projects, "project registry")
 end
 
 ---@param root string
 ---@return proj.Project?
-function Registry:add(root)
-    if fn.isdirectory(root .. "/.git") == 0 then
-        vim.notify("Not a git repo: " .. root, vim.log.levels.WARN)
-        return nil
-    end
-    local data = self:read()
-    for _, p in ipairs(data) do
-        if p.root == root then
-            vim.notify("Already registered: " .. p.name, vim.log.levels.WARN)
-            return nil
-        end
-    end
-    local proj = self:new_project(root)
-    data[#data + 1] = proj
-    self:write(data)
-    vim.notify("Added project: " .. proj.name, vim.log.levels.INFO)
-    return proj
+function ProjectList:add(root)
+  if fn.isdirectory(root .. "/.git") == 0 then
+    utils.warn("Not a git repo: " .. root)
+    return nil
+  end
+  if self.by_root[root] then
+    local existing = self.projects[self.by_root[root]]
+    utils.warn("Already registered: " .. existing.name)
+    return nil
+  end
+  local proj = self:new_project(root)
+  self.projects[#self.projects + 1] = proj
+  self:reindex()
+  self:save()
+  utils.info("Added project: " .. proj.name)
+  return proj
 end
 
 ---@param root string
-function Registry:increment_open(root)
-    local data = self:read()
-    local changed = false
-    for _, p in ipairs(data) do
-        if p.root == root then
-            p.open_count = (p.open_count or 0) + 1
-            changed = true
-            break
-        end
-    end
-    if changed then
-        self:write(data)
-    end
+function ProjectList:increment_open(root)
+  local idx = self.by_root[root]
+  if not idx then
+    return
+  end
+  local proj = self.projects[idx]
+  proj.open_count = (proj.open_count or 0) + 1
+  self:save()
 end
 
 ---@param root string
-function Registry:remove(root)
-    local data, filtered = self:read(), {}
-    for _, p in ipairs(data) do
-        if p.root ~= root then
-            filtered[#filtered + 1] = p
-        end
+function ProjectList:remove(root)
+  local idx = self.by_root[root]
+  if not idx then
+    return
+  end
+  table.remove(self.projects, idx)
+  self:reindex()
+  self:save()
+end
+
+---@param path string
+---@return proj.Project?
+function ProjectList:find_by_path(path)
+  for _, proj in ipairs(self.projects) do
+    if path == proj.root or vim.startswith(path .. "/", proj.root .. "/") then
+      return proj
     end
-    self:write(filtered)
+  end
+  return nil
 end
 
 ---@param path? string Directory to query (defaults to cwd).
 ---@return string? git_root Absolute git root or `nil` outside a repository.
-function Registry:find_git_root(path)
-    local result = fn.systemlist({ "git", "-C", path or fn.getcwd(), "rev-parse", "--show-toplevel" })
-    if vim.v.shell_error ~= 0 or #result == 0 then
-        return nil
-    end
-    return result[1]
+function ProjectList:find_git_root(path)
+  local result = fn.systemlist({ "git", "-C", path or fn.getcwd(), "rev-parse", "--show-toplevel" })
+  if vim.v.shell_error ~= 0 or #result == 0 then
+    return nil
+  end
+  return result[1]
 end
 
----@type proj.ProjectRegistry
-local registry = Registry:new()
+---@type proj.ProjectList
+local registry = ProjectList:new()
 
-local M = { Registry = Registry }
+local M = { ProjectList = ProjectList }
 
 ---@param root string
 ---@return proj.Project
 function M.new(root)
-    return registry:new_project(root)
+  return registry:new_project(root)
 end
 
 ---@return proj.Project[]
 function M.read()
-    return registry:read()
+  return registry:reload()
 end
 
 ---@param data proj.Project[]
 function M.write(data)
-    registry:write(data)
+  registry:set(data)
 end
 
 ---@param root string
 ---@return proj.Project?
 function M.add(root)
-    return registry:add(root)
+  return registry:add(root)
 end
 
 ---@param root string
 function M.increment_open(root)
-    registry:increment_open(root)
+  registry:increment_open(root)
 end
 
 ---@param root string
 function M.remove(root)
-    registry:remove(root)
+  registry:remove(root)
+end
+
+---@param path string
+---@return proj.Project?
+function M.find_by_path(path)
+  registry:reload()
+  return registry:find_by_path(path)
 end
 
 ---@param path? string
 ---@return string?
 function M.find_git_root(path)
-    return registry:find_git_root(path)
+  return registry:find_git_root(path)
 end
 
 return M

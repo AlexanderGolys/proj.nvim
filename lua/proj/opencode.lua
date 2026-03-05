@@ -1,6 +1,10 @@
 -- @@@proj.opencode
 -- ###nvim-plugin
 
+local utils = require("proj.utils")
+
+---@alias proj.PortRegistry table<string, integer>
+
 ---@class proj.OpenCodeService
 ---@field registry_file string Path to persistent port registry.
 local OpenCode = {}
@@ -12,25 +16,15 @@ function OpenCode:new()
 end
 
 ---@private
----@return table<string, integer>
+---@return proj.PortRegistry
 function OpenCode:read_registry()
-    local file = io.open(self.registry_file, "r")
-    if not file then return {} end
-    local content = file:read("*a")
-    file:close()
-    if content == "" then return {} end
-    local ok, parsed = pcall(vim.json.decode, content)
-    return ok and parsed or {}
+    return utils.read_json(self.registry_file)
 end
 
 ---@private
----@param data table<string, integer>
+---@param data proj.PortRegistry
 function OpenCode:write_registry(data)
-    local file = io.open(self.registry_file, "w")
-    if file then
-        file:write(vim.json.encode(data))
-        file:close()
-    end
+    utils.write_json(self.registry_file, data, "opencode registry")
 end
 
 ---@private
@@ -66,7 +60,7 @@ end
 function OpenCode:attach(port)
     local provider = require("opencode.config").provider
     if not provider then
-        vim.notify("No opencode provider found", vim.log.levels.ERROR)
+        utils.error("No opencode provider found")
         return
     end
     provider.cmd = "opencode attach http://127.0.0.1:" .. port .. " -c"

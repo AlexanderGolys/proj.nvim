@@ -2,6 +2,7 @@
 -- ###nvim-plugin
 
 local fn = vim.fn
+local utils = require("proj.utils")
 
 ---@class proj.SessionService
 ---@field dir string Directory where session files are stored.
@@ -34,7 +35,7 @@ end
 ---@private
 function Session:_ensure_dir()
     if fn.isdirectory(self.dir) == 0 and not pcall(fn.mkdir, self.dir, "p") then
-        vim.notify("Failed to create session directory", vim.log.levels.WARN)
+        utils.notify("Failed to create session directory")
     end
 end
 
@@ -43,11 +44,11 @@ function Session:save(name)
     self:_ensure_dir()
     local prev = vim.o.sessionoptions
     vim.o.sessionoptions = self.tab_ssop
-    local ok = pcall(function() vim.cmd("mksession! " .. fn.fnameescape(self:_path(name))) end)
+    local ok = utils.try_cmd(function()
+        vim.cmd("mksession! " .. fn.fnameescape(self:_path(name)))
+    end, "Failed to save session: " .. name)
     vim.o.sessionoptions = prev
-    if not ok then
-        vim.notify("Failed to save session: " .. name, vim.log.levels.WARN)
-    end
+    if not ok then return end
 end
 
 ---@param name string Project name.
@@ -55,26 +56,28 @@ end
 function Session:restore(name, root)
     local path = self:_path(name)
     if fn.filereadable(path) == 1 then
-        pcall(function() vim.cmd("silent! only") end)
-        pcall(function() vim.cmd("silent! enew") end)
+        utils.try_cmd(function() vim.cmd("silent! only") end, "Session restore failed before close windows")
+        utils.try_cmd(function() vim.cmd("silent! enew") end, "Session restore failed before creating scratch buffer")
         if pcall(function() vim.cmd("source " .. fn.fnameescape(path)) end) then
             vim.cmd.tcd(fn.fnameescape(root))
             return
         end
-        vim.notify("Failed to restore session, opening directory", vim.log.levels.WARN)
+        utils.notify("Failed to restore session, opening directory")
     end
     vim.cmd.edit(root)
 end
 
 function Session:save_global()
     self:_ensure_dir()
-    pcall(function() vim.cmd("mksession! " .. fn.fnameescape(self.dir .. "_global.vim")) end)
+    utils.try_cmd(function()
+        vim.cmd("mksession! " .. fn.fnameescape(self.dir .. "_global.vim"))
+    end, "Failed to save global session")
 end
 
 function Session:restore_global()
     local path = self.dir .. "_global.vim"
     if fn.filereadable(path) == 1 then
-        pcall(function() vim.cmd("source " .. fn.fnameescape(path)) end)
+        utils.try_cmd(function() vim.cmd("source " .. fn.fnameescape(path)) end, "Failed to restore global session")
     end
 end
 

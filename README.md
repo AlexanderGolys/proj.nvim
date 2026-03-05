@@ -72,17 +72,19 @@ Each item prefixed with project name.
 
 ### Git Operations
 
-**`:ProjectGitStatus`** — Show `git status --short` in a picker.
+Git pickers are delegated to `Snacks.picker.git_*` in the project root.
 
-**`:ProjectGitDiff`** — Show `git diff` in a picker.
+**`:ProjectGitStatus`** — Open `Snacks.picker.git_status`.
 
-**`:ProjectGitHistory`** — Show `git log` in a picker.
+**`:ProjectGitDiff`** — Open `Snacks.picker.git_diff`.
 
-**`:ProjectGitCommit`** — Stage/commit workflow via picker.
+**`:ProjectGitHistory`** — Open `Snacks.picker.git_log`.
 
-**`:ProjectGitStash`** — Stash/pop workflow.
+**`:ProjectGitCommit`** — Async `git add -A` + `git commit -m`.
 
-**`:ProjectGitBranch`** — Create or switch branches.
+**`:ProjectGitStash`** — Open `Snacks.picker.git_stash`.
+
+**`:ProjectGitBranch`** — Open `Snacks.picker.git_branches`.
 
 ### Utilities
 
@@ -94,23 +96,54 @@ Each item prefixed with project name.
 
 ## Setup Options
 
-`require("proj").setup({ ... })` supports:
+Standard usage:
+
+```lua
+require("proj").setup({
+    keymaps = {
+        add_any_item = "<leader>pa",
+        preview_lists = "<leader>pp",
+    },
+})
+```
+
+You can also use a config callback:
+
+```lua
+require("proj").setup({
+    opts = { keymap_prefix = "p" },
+    config = function(cfg)
+        cfg.keymaps = cfg.keymaps or {}
+        cfg.keymaps.preview_lists = "<leader>pP"
+        return cfg
+    end,
+})
+```
+
+Supported config fields:
 
 - `keymap_prefix` (default `"p"`) for plugin-owned `<leader>` keymaps.
 - `register_keymap_lhs` (default `"<kEnter>a"`): buffer-local disable target
   for project registration keymaps when the current buffer is already inside a
   registered project.
+- `keymaps` (optional table) to override plugin mappings:
+  - `add_any_item` for `:ProjectGlobalAddAnyItem`
+  - `preview_lists` for `:ProjectPreviewLists`
+- set `keymaps = false` to disable plugin mappings entirely
 
 ## Architecture
 
 Seven modules under `lua/proj/`:
 
-**`init.lua`** — Entry point. Wires all commands, keymaps, and autocmds.
+**`proj.lua`** — Entry point. Wires all commands, keymaps, and autocmds.
 Maintains tab→project mapping, handles project switching, session save/restore.
 
-**`project.lua`** — Project registry (JSON at `stdpath("data")/proj_registry.json`).
-Functions: `new(root)`, `read()`, `add(root)`, `remove(root)`, `write()`, `find_git_root()`.
-Tracks open counts for project frequency sorting.
+**`project.lua`** — `ProjectList` object backed by registry JSON at
+`stdpath("data")/proj_registry.json`. Constructor reads/parses projects,
+keeps an in-memory index, and persists on mutations.
+
+**`config.lua`** — Config defaults + resolved options. Handles merge logic for
+`setup(opts)` and optional `config` callback.
 
 **`session.lua`** — Saves/restores sessions per-project and global.
 Files under `stdpath("data")/proj_sessions/`. Fallback to `vim.cmd.edit(root)`.
@@ -118,13 +151,12 @@ Files under `stdpath("data")/proj_sessions/`. Fallback to `vim.cmd.edit(root)`.
 **`lists.lua`** — Parses markdown by `## ` headings into items.
 Functions: `parse()`, `pick()` (snacks picker), `add()`, and cross-project aggregators.
 
-**`git.lua`** — Thin wrappers around `git` commands.
-Functions: `status()`, `diff()`, `history()`, `commit()`, `stash()`, `branch()`.
-
 **`issues.lua`** — JSON-based issue tracking (`.issues/{bugs,todos}.json`).
 Functions: `pick()`, `pick_global()` for cross-project aggregation.
 
 **`opencode.lua`** — Toggles opencode terminal scoped to project directory.
+
+**`utils.lua`** — Shared IO/json/notify helpers used by project modules.
 
 ## Integration
 
@@ -147,12 +179,12 @@ require("lualine").setup({
 
 ### Keymaps
 
-Default keymaps under `<leader>p`:
+Default keymaps:
 
 - `<leader>pa` — Add item to any list in any project
 - `<leader>pp` — Preview all lists in current project
 
-Configurable prefix via `require("proj").setup({ keymap_prefix = "..." })`.
+Configurable via `require("proj").setup({ keymaps = { ... } })`.
 
 ## Design
 
@@ -162,4 +194,4 @@ Configurable prefix via `require("proj").setup({ keymap_prefix = "..." })`.
 - **Lists** — Any `.md` with `##` headings in project root becomes a browsable list.
 - **Auto-detect** — On startup or tab entry, project auto-detected from current directory.
 - **CWD sync** — Tab-local CWD (`tcd`) always matches project root.
-- **Modules are leaves** — No circular requires; all modules independent except `init.lua`.
+- **Modules are mostly leaves** — Shared helper logic lives in `proj.utils`.

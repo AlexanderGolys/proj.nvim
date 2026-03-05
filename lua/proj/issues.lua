@@ -2,6 +2,24 @@
 -- ###nvim-plugin
 
 local fn = vim.fn
+local utils = require("proj.utils")
+
+---@alias proj.IssueKind "bugs"|"todos"
+---@alias proj.IssueStatus "open"|"in-progress"|"resolved"
+---@alias proj.IssueSubtype "notification"|"input-error"|"traceback"|"silent"|string
+
+---@class proj.IssueEntry
+---@field id string
+---@field title? string
+---@field subtype? proj.IssueSubtype
+---@field severity? string
+---@field project? string
+---@field context? string
+---@field file? string
+---@field status? proj.IssueStatus
+---@field created? string
+---@field description? string
+---@field image_path? string
 
 local SUBTYPE_ICONS = {
     notification = "󰵙 ",
@@ -21,7 +39,7 @@ end
 
 ---@private
 ---@param root string
----@param kind "bugs"|"todos"
+---@param kind proj.IssueKind
 ---@return string
 function Issues:issues_path(root, kind)
     return root .. "/.issues/" .. kind .. ".json"
@@ -29,30 +47,20 @@ end
 
 ---@private
 ---@param path string
----@return table[]
+---@return proj.IssueEntry[]
 function Issues:read_json(path)
-    if fn.filereadable(path) ~= 1 then return {} end
-    local ok, raw = pcall(fn.readfile, path)
-    if not ok then return {} end
-    local ok_decode, data = pcall(vim.json.decode, table.concat(raw, "\n"))
-    return ok_decode and type(data) == "table" and data or {}
+    return utils.read_json(path)
 end
 
 ---@private
 ---@param path string
----@param data table[]
+---@param data proj.IssueEntry[]
 function Issues:write_json(path, data)
-    local dir = fn.fnamemodify(path, ":h")
-    if fn.isdirectory(dir) == 0 then
-        pcall(fn.mkdir, dir, "p")
-    end
-    local encoded = vim.json.encode(data)
-    local result = vim.system({ "python3", "-c", "import sys,json; print(json.dumps(json.loads(sys.stdin.read()), indent=2))" }, { stdin = encoded }):wait()
-    fn.writefile(vim.split(result.code == 0 and result.stdout or encoded, "\n", { plain = true }), path)
+    utils.write_json(path, data, "issues file")
 end
 
 ---@private
----@param entry table
+---@param entry proj.IssueEntry
 ---@return string
 function Issues:entry_label(entry)
     local icon = SUBTYPE_ICONS[entry.subtype] or "  "
@@ -62,7 +70,7 @@ function Issues:entry_label(entry)
 end
 
 ---@private
----@param entry table
+---@param entry proj.IssueEntry
 ---@return string
 function Issues:entry_preview(entry)
     local lines = { "# " .. (entry.title or "Untitled"), "" }
@@ -92,7 +100,7 @@ end
 ---@private
 ---@param path string
 ---@param id string
----@param status string
+---@param status proj.IssueStatus
 function Issues:set_status(path, id, status)
     local data = self:read_json(path)
     for _, e in ipairs(data) do
@@ -132,7 +140,7 @@ function Issues:pick(path, title, project_root)
             if fn.filereadable(fpath) == 1 then
                 vim.cmd.edit(fn.fnameescape(fpath))
             else
-                vim.notify("File not found: " .. fpath, vim.log.levels.WARN)
+                utils.warn("File not found: " .. fpath)
             end
         end,
         actions = {
@@ -140,21 +148,21 @@ function Issues:pick(path, title, project_root)
                 if not item then return end
                 picker:close()
                 self:delete_entry(item._path, item._entry.id)
-                vim.notify("Deleted " .. item._entry.id, vim.log.levels.INFO)
+                utils.info("Deleted " .. item._entry.id)
                 reopen()
             end,
             issue_resolved = function(picker, item)
                 if not item then return end
                 picker:close()
                 self:set_status(item._path, item._entry.id, "resolved")
-                vim.notify("Marked resolved: " .. item._entry.id, vim.log.levels.INFO)
+                utils.info("Marked resolved: " .. item._entry.id)
                 reopen()
             end,
             issue_in_progress = function(picker, item)
                 if not item then return end
                 picker:close()
                 self:set_status(item._path, item._entry.id, "in-progress")
-                vim.notify("Marked in-progress: " .. item._entry.id, vim.log.levels.INFO)
+                utils.info("Marked in-progress: " .. item._entry.id)
                 reopen()
             end,
         },
@@ -167,7 +175,7 @@ function Issues:pick(path, title, project_root)
 end
 
 ---@param projects proj.Project[]
----@param kind "bugs"|"todos"
+---@param kind proj.IssueKind
 ---@param title string
 function Issues:pick_global(projects, kind, title)
     local items = {}
@@ -195,14 +203,14 @@ function Issues:pick_global(projects, kind, title)
             if fn.filereadable(fpath) == 1 then
                 vim.cmd.edit(fn.fnameescape(fpath))
             else
-                vim.notify("File not found: " .. fpath, vim.log.levels.WARN)
+                utils.warn("File not found: " .. fpath)
             end
         end,
     })
 end
 
 ---@param root string
----@param kind "bugs"|"todos"
+---@param kind proj.IssueKind
 ---@return string
 function Issues:path(root, kind)
     return self:issues_path(root, kind)
@@ -217,11 +225,11 @@ local M = { Issues = Issues }
 ---@param project_root? string
 function M.pick(path, title, project_root) service:pick(path, title, project_root) end
 ---@param projects proj.Project[]
----@param kind "bugs"|"todos"
+---@param kind proj.IssueKind
 ---@param title string
 function M.pick_global(projects, kind, title) service:pick_global(projects, kind, title) end
 ---@param root string
----@param kind "bugs"|"todos"
+---@param kind proj.IssueKind
 ---@return string
 function M.path(root, kind) return service:path(root, kind) end
 
