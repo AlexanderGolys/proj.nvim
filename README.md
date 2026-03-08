@@ -2,7 +2,7 @@
 
 
 Tab-scoped project manager for Neovim. Each tab owns one project with its own
-working directory, session, and opencode instance. Projects are registered from
+working directory. Projects are registered from
 git repos and persisted across restarts. Markdown files with `##` headings become
 browsable lists with preview. Includes git operations, JSON issue tracking, and
 cross-project aggregation.
@@ -10,7 +10,6 @@ cross-project aggregation.
 ## Dependencies
 
 - [snacks.nvim](https://github.com/folke/snacks.nvim) -- picker, input, win
-- [opencode.nvim](https://github.com/nickjvandyke/opencode.nvim) -- AI coding assistant
 
 ## Commands
 
@@ -20,8 +19,11 @@ cross-project aggregation.
 Project name is the directory basename. Registry saved to `stdpath("data")/proj_registry.json`.
 
 **`:ProjectSwitch`** — Open picker of all registered projects, sorted by open frequency.
-Selecting a project switches to it: sets tab-local CWD, restores session, or opens explorer.
-Previous project's session saved automatically.
+Selecting a project switches to it: sets tab-local CWD and opens the remembered
+last modified file for that project. If no file is remembered, opens `readme.md`
+from project root, then falls back to opening the project root.
+
+**`:ProjectReadme`** — Open `README.md` from the current project root.
 
 ### Lists (Markdown with `##` headings)
 
@@ -88,8 +90,6 @@ Git pickers are delegated to `Snacks.picker.git_*` in the project root.
 
 ### Utilities
 
-**`:ProjectOpenCode`** — Toggle opencode terminal scoped to current project (or global if no project).
-
 **`:ProjectHelp`** — Open plugin help in equal vertical split.
 
 **`:ProjectPreviewLists`** — Toggle floating preview of all non-empty `.md` lists in project root.
@@ -133,10 +133,10 @@ Supported config fields:
 
 ## Architecture
 
-Seven modules under `lua/proj/`:
+Six modules under `lua/proj/`:
 
 **`proj.lua`** — Entry point. Wires all commands, keymaps, and autocmds.
-Maintains tab→project mapping, handles project switching, session save/restore.
+Maintains tab→project mapping, handles project switching and per-project file restore.
 
 **`project.lua`** — `ProjectList` object backed by registry JSON at
 `stdpath("data")/proj_registry.json`. Constructor reads/parses projects,
@@ -145,16 +145,14 @@ keeps an in-memory index, and persists on mutations.
 **`config.lua`** — Config defaults + resolved options. Handles merge logic for
 `setup(opts)` and optional `config` callback.
 
-**`session.lua`** — Saves/restores sessions per-project and global.
-Files under `stdpath("data")/proj_sessions/`. Fallback to `vim.cmd.edit(root)`.
+**`last_file.lua`** — Stores and restores last modified file per project in
+`stdpath("data")/proj_last_files.json`.
 
 **`lists.lua`** — Parses markdown by `## ` headings into items.
 Functions: `parse()`, `pick()` (snacks picker), `add()`, and cross-project aggregators.
 
 **`issues.lua`** — JSON-based issue tracking (`.issues/{bugs,todos}.json`).
 Functions: `pick()`, `pick_global()` for cross-project aggregation.
-
-**`opencode.lua`** — Toggles opencode terminal scoped to project directory.
 
 **`utils.lua`** — Shared IO/json/notify helpers used by project modules.
 
@@ -190,7 +188,7 @@ Configurable via `require("proj").setup({ keymaps = { ... } })`.
 
 - **One project per tab** — Each tab maps to one project via `tabpage -> Project` table.
 - **Registry** — Persisted in JSON at `stdpath("data")/proj_registry.json`.
-- **Sessions** — Per-project under `stdpath("data")/proj_sessions/`, global `_global.vim`.
+- **Last modified file restore** — Per-project file map under `stdpath("data")/proj_last_files.json`.
 - **Lists** — Any `.md` with `##` headings in project root becomes a browsable list.
 - **Auto-detect** — On startup or tab entry, project auto-detected from current directory.
 - **CWD sync** — Tab-local CWD (`tcd`) always matches project root.

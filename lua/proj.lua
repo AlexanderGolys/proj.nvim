@@ -1,5 +1,5 @@
 local project = require("proj.project")
-local session = require("proj.session")
+local last_file = require("proj.last_file")
 local lists = require("proj.lists")
 local issues = require("proj.issues")
 local utils = require("proj.utils")
@@ -9,10 +9,9 @@ local config = require("proj.config")
 -- @##proj
 --
 -- /@@proj.project
--- /@@proj.session
+-- /@@proj.last_file
 -- /@@proj.lists
 -- /@@proj.issues
--- /@@proj.opencode
 -- /@@proj.utils
 -- /@@proj.config
 
@@ -31,6 +30,17 @@ end
 ---@return proj.Project?
 function ProjectManager:current(tabpage)
   return self.tab_projects[tabpage or vim.api.nvim_get_current_tabpage()]
+end
+
+---@private
+---@return string
+function ProjectManager:current_buf_dir()
+  local buf = vim.api.nvim_get_current_buf()
+  local buf_name = vim.api.nvim_buf_get_name(buf)
+  if buf_name ~= "" and not buf_name:match("^%a+://") then
+    return vim.fn.fnamemodify(buf_name, ":p:h")
+  end
+  return vim.fn.getcwd()
 end
 
 ---@private
@@ -53,15 +63,13 @@ end
 ---@private
 ---@param proj proj.Project
 function ProjectManager:open_project(proj)
-  local prev = self:current()
-  if prev then
-    session.save(prev.name)
-  end
   project.increment_open(proj.root)
   local tab = vim.api.nvim_get_current_tabpage()
   self.tab_projects[tab] = proj
   vim.cmd.tcd(vim.fn.fnameescape(proj.root))
-  session.restore(proj.name, proj.root)
+  vim.schedule(function()
+    last_file.open(proj.root)
+  end)
 end
 
 ---@private
@@ -94,11 +102,22 @@ function ProjectManager:add_to_list(filename, title)
   if not filepath then
     return
   end
-  Snacks.input({ prompt = "New " .. title }, function(value)
-    if value and value ~= "" then
-      lists.add(filepath, value)
-    end
+  utils.input_nonempty("New " .. title, function(value)
+    lists.add(filepath, value)
   end)
+end
+
+---@private
+---@param root string
+---@return string?
+function ProjectManager:project_readme(root)
+  for _, name in ipairs({ "README.md", "readme.md", "Readme.md" }) do
+    local path = root .. "/" .. name
+    if vim.fn.filereadable(path) == 1 then
+      return path
+    end
+  end
+  return nil
 end
 
 ---@private
@@ -114,10 +133,7 @@ function ProjectManager:auto_detect_project()
   if self.tab_projects[tab] then
     return
   end
-  local buf = vim.api.nvim_get_current_buf()
-  local buf_name = vim.api.nvim_buf_get_name(buf)
-  local cwd = (buf_name ~= "" and not buf_name:match("^%a+://")) and vim.fn.fnamemodify(buf_name, ":h") or vim.fn.getcwd()
-  local detected = project.find_by_path(cwd)
+  local detected = project.find_by_path(self:current_buf_dir())
   if detected then
     self.tab_projects[tab] = detected
     vim.cmd.tcd(vim.fn.fnameescape(detected.root))
@@ -143,9 +159,7 @@ function ProjectManager:sync_register_keymap()
     return
   end
   local buf = vim.api.nvim_get_current_buf()
-  local buf_name = vim.api.nvim_buf_get_name(buf)
-  local dir = (buf_name ~= "" and not buf_name:match("^%a+://")) and vim.fn.fnamemodify(buf_name, ":p:h") or vim.fn.getcwd()
-  if self:in_registered_project(dir) then
+  if self:in_registered_project(self:current_buf_dir()) then
     vim.keymap.set({ "n", "x" }, lhs, "<Nop>", {
       buffer = buf,
       noremap = true,
@@ -154,27 +168,23 @@ function ProjectManager:sync_register_keymap()
     })
     return
   end
-  pcall(vim.keymap.del, "n", lhs, { buffer = buf })
-  pcall(vim.keymap.del, "x", lhs, { buffer = buf })
+  utils.safe_del_keymap(lhs, buf, { "n", "x" })
 end
 
 ---@private
 ---@param cwd string
 function ProjectManager:git_commit(cwd)
-  Snacks.input({ prompt = "Commit message" }, function(msg)
-    if not msg or msg == "" then
-      return
-    end
+  utils.input_nonempty("Commit message", function(msg)
     vim.system({ "git", "-C", cwd, "add", "-A" }, {}, function(add_result)
       vim.schedule(function()
         if add_result.code ~= 0 then
-          local add_out = vim.trim(((add_result.stderr or "") .. "\n" .. (add_result.stdout or "")))
+          local add_out = utils.system_output(add_result)
           utils.warn(add_out ~= "" and ("git add failed:\n" .. add_out) or "git add failed")
           return
         end
         vim.system({ "git", "-C", cwd, "commit", "-m", msg }, {}, function(commit_result)
           vim.schedule(function()
-            local commit_out = vim.trim(((commit_result.stdout or "") .. "\n" .. (commit_result.stderr or "")))
+            local commit_out = utils.system_output(commit_result)
             if commit_result.code == 0 then
               utils.info(commit_out ~= "" and commit_out or "Committed changes")
               return
@@ -189,6 +199,18 @@ end
 
 ---@private
 function ProjectManager:setup_commands()
+  local function cmd(name, callback, opts)
+    vim.api.nvim_create_user_command(name, callback, opts)
+  end
+
+  local function with_cur(callback)
+    local cur = self:current_or_warn()
+    if not cur then
+      return
+    end
+    callback(cur)
+  end
+
   vim.api.nvim_create_user_command("ProjectHelp", function()
     local ok = pcall(function()
       vim.cmd("vert help proj.nvim")
@@ -203,7 +225,7 @@ function ProjectManager:setup_commands()
     end)
   end, { desc = "Open proj help in an equal vertical split" })
 
-  vim.api.nvim_create_user_command("ProjectAdd", function()
+  cmd("ProjectAdd", function()
     local root = project.find_git_root()
     if not root then
       utils.warn("Not inside a git repo")
@@ -217,18 +239,115 @@ function ProjectManager:setup_commands()
     end
   end, { desc = "Register current git repo as project" })
 
-  vim.api.nvim_create_user_command("ProjectSwitch", function()
+  cmd("ProjectSwitch", function()
     local projects = project.read()
     if #projects == 0 then
       utils.info("No projects registered")
       return
     end
+    local remembered_by_root = last_file.all()
     table.sort(projects, function(a, b)
       return (a.open_count or 0) > (b.open_count or 0)
     end)
+
+    local function readme_path(root)
+      for _, name in ipairs({ "README.md", "readme.md", "Readme.md" }) do
+        local path = root .. "/" .. name
+        if vim.fn.filereadable(path) == 1 then
+          return path
+        end
+      end
+      return nil
+    end
+
+    local function root_files_preview(root)
+      local entries = vim.fn.readdir(root)
+      if #entries == 0 then
+        return { "Files:", "  (no files)" }
+      end
+      table.sort(entries)
+      local lines = { "Files:" }
+      local max_entries = 14
+      local shown = math.min(#entries, max_entries)
+      for idx = 1, shown do
+        local name = entries[idx]
+        local full = root .. "/" .. name
+        local suffix = vim.fn.isdirectory(full) == 1 and "/" or ""
+        lines[#lines + 1] = "  - " .. name .. suffix
+      end
+      if #entries > max_entries then
+        lines[#lines + 1] = "  ... +" .. tostring(#entries - max_entries) .. " more"
+      end
+      return lines
+    end
+
+    local function readme_preview(root)
+      local path = readme_path(root)
+      if not path then
+        return { "README:", "  (not found)" }
+      end
+
+      local content = utils.read_lines(path)
+      if #content == 0 then
+        return { "README:", "  (empty)" }
+      end
+
+      local lines = { "README (" .. vim.fn.fnamemodify(path, ":t") .. "):" }
+      local max_lines = 20
+      local shown = math.min(#content, max_lines)
+      for idx = 1, shown do
+        lines[#lines + 1] = content[idx]
+      end
+      if #content > max_lines then
+        lines[#lines + 1] = ""
+        lines[#lines + 1] = "... +" .. tostring(#content - max_lines) .. " more lines"
+      end
+      return lines
+    end
+
+    local function preview_text(root, name, open_count)
+      local remembered = remembered_by_root[root]
+      local readme = readme_path(root)
+      local fallback = readme or root
+      local open_target = fallback
+
+      local remembered_text = "none"
+      if type(remembered) == "string" and remembered ~= "" then
+        if vim.fn.filereadable(remembered) == 1 then
+          remembered_text = remembered
+          open_target = remembered
+        else
+          remembered_text = remembered .. " (missing)"
+        end
+      end
+
+      local lines = {
+        name,
+        "",
+        "Root: " .. root,
+        "Opened: " .. tostring(open_count or 0),
+        "Last modified file: " .. remembered_text,
+        "Open target when selected: " .. open_target,
+        "",
+      }
+      vim.list_extend(lines, root_files_preview(root))
+      lines[#lines + 1] = ""
+      vim.list_extend(lines, readme_preview(root))
+      return table.concat(lines, "\n")
+    end
+
     local items = {}
     for _, p in ipairs(projects) do
-      items[#items + 1] = { text = p.name, root = p.root, name = p.name }
+      items[#items + 1] = {
+        text = p.name,
+        root = p.root,
+        name = p.name,
+        open_count = p.open_count or 0,
+        preview = {
+          text = preview_text(p.root, p.name, p.open_count or 0),
+          ft = "markdown",
+        },
+      }
     end
     Snacks.picker({
       title = "Projects",
@@ -239,29 +358,42 @@ function ProjectManager:setup_commands()
       confirm = function(picker, item)
         picker:close()
         if item then
-          self:open_project({ root = item.root, name = item.name, open_count = 0 })
+          self:open_project({ root = item.root, name = item.name, open_count = item.open_count or 0 })
         end
-      end,
-      preview = function(ctx)
-        ctx.preview:set_lines({ ctx.item.name, "", ctx.item.root })
-        return true
       end,
     })
   end, { desc = "Open project switcher" })
 
-  vim.api.nvim_create_user_command("ProjectList", function(cmd)
-    local cur = self:current_or_warn()
-    if not cur then
-      return
-    end
-    local filename = cmd.args
-    lists.pick(cur.root .. "/" .. filename, vim.fn.fnamemodify(filename, ":r"), cur.root)
+  cmd("ProjectList", function(call)
+    with_cur(function(cur)
+      local filename = call.args
+      lists.pick(cur.root .. "/" .. filename, vim.fn.fnamemodify(filename, ":r"), cur.root)
+    end)
   end, { nargs = 1, desc = "Pick items from a project list file" })
 
-  vim.api.nvim_create_user_command("ProjectAddItem", function(cmd)
-    local filename = cmd.args
+  cmd("ProjectAddItem", function(call)
+    local filename = call.args
     self:add_to_list(filename, vim.fn.fnamemodify(filename, ":r"))
   end, { nargs = 1, desc = "Add item to a project list file" })
+
+  local open_current_readme = function()
+    local cur = self:current()
+    local root = cur and cur.root or project.find_by_path(self:current_buf_dir())
+    if not root then
+      utils.warn("No active project")
+      return
+    end
+    local readme = self:project_readme(root)
+    if not readme then
+      utils.warn("README not found in current project")
+      return
+    end
+    vim.cmd.edit(vim.fn.fnameescape(readme))
+  end
+
+  cmd("ProjectReadme", open_current_readme, { desc = "Open README.md in current project" })
+  cmd("ProjectReadMe", open_current_readme, { desc = "Open README.md in current project" })
+  cmd("ProjectREADME", open_current_readme, { desc = "Open README.md in current project" })
 
   for _, item in ipairs({
     { "ProjectTodo", "TODO.md", "TODO" },
@@ -270,52 +402,52 @@ function ProjectManager:setup_commands()
     { "ProjectRemember", "REMEMBER.md", "REMEMBER" },
   }) do
     local name, file, title = item[1], item[2], item[3]
-    vim.api.nvim_create_user_command(name, function()
+    cmd(name, function()
       self:pick_list(file, title)
     end, { desc = "Pick " .. title .. " items" })
-    vim.api.nvim_create_user_command("ProjectAdd" .. name:sub(8), function()
+    cmd("ProjectAdd" .. name:sub(8), function()
       self:add_to_list(file, title)
     end, { desc = "Add " .. title .. " item" })
   end
 
-  vim.api.nvim_create_user_command("ProjectGlobalList", function(cmd)
-    local filename = cmd.args
+  cmd("ProjectGlobalList", function(call)
+    local filename = call.args
     lists.pick_global(project.read(), filename, vim.fn.fnamemodify(filename, ":r"))
   end, { nargs = 1, desc = "Pick items from a list across all projects" })
 
   for _, item in ipairs({ { "TODO.md", "TODO" }, { "BUGS.md", "BUGS" }, { "TOTEST.md", "TOTEST" } }) do
     local file, title = item[1], item[2]
-    vim.api.nvim_create_user_command("ProjectGlobal" .. title, function()
+    cmd("ProjectGlobal" .. title, function()
       lists.pick_global(project.read(), file, title)
     end, { desc = "Global " .. title .. " picker" })
   end
 
-  vim.api.nvim_create_user_command("ProjectGlobalKeymaps", function()
+  cmd("ProjectGlobalKeymaps", function()
     lists.pick_own("KEYMAPS.md", "KEYMAPS")
   end, { desc = "Global KEYMAPS list" })
-  vim.api.nvim_create_user_command("ProjectGlobalRemember", function()
+  cmd("ProjectGlobalRemember", function()
     lists.pick_own("REMEMBER.md", "REMEMBER")
   end, { desc = "Global REMEMBER list" })
-  vim.api.nvim_create_user_command("ProjectGlobalAddKeymaps", function()
+  cmd("ProjectGlobalAddKeymaps", function()
     lists.add_own("KEYMAPS.md", "KEYMAPS")
   end, { desc = "Add to global KEYMAPS" })
-  vim.api.nvim_create_user_command("ProjectGlobalAddRemember", function()
+  cmd("ProjectGlobalAddRemember", function()
     lists.add_own("REMEMBER.md", "REMEMBER")
   end, { desc = "Add to global REMEMBER" })
 
-  vim.api.nvim_create_user_command("ProjectGlobalAddItem", function(cmd)
-    local filename = cmd.args
+  cmd("ProjectGlobalAddItem", function(call)
+    local filename = call.args
     lists.add_to_project(project.read(), filename, vim.fn.fnamemodify(filename, ":r"))
   end, { nargs = 1, desc = "Add item to a list in any project" })
 
-  vim.api.nvim_create_user_command("ProjectGlobalAddAnyItem", function()
+  cmd("ProjectGlobalAddAnyItem", function()
     lists.add_to_any_project_list(project.read())
   end, { desc = "Add item to any list in any project" })
 
   for _, item in ipairs({ { "TODO.md", "TODO" }, { "BUGS.md", "BUG" }, { "TOTEST.md", "TOTEST" } }) do
     local file, title = item[1], item[2]
     local cmd_name = title == "BUG" and "ProjectGlobalAddBug" or ("ProjectGlobalAdd" .. title)
-    vim.api.nvim_create_user_command(cmd_name, function()
+    cmd(cmd_name, function()
       lists.add_to_project(project.read(), file, title)
     end, { desc = "Add " .. title .. " to any project" })
   end
@@ -328,79 +460,60 @@ function ProjectManager:setup_commands()
     issues.pick(issues.path(cur.root, kind), title, cur.root)
   end
 
-  vim.api.nvim_create_user_command("ProjectIssues", function()
+  cmd("ProjectIssues", function()
     pick_issues("bugs", "Bugs")
   end, { desc = "Pick bugs from .issues/bugs.json" })
-  vim.api.nvim_create_user_command("ProjectIssuesTodo", function()
+  cmd("ProjectIssuesTodo", function()
     pick_issues("todos", "Todos")
   end, { desc = "Pick todos from .issues/todos.json" })
-  vim.api.nvim_create_user_command("ProjectIssuesGlobal", function()
+  cmd("ProjectIssuesGlobal", function()
     issues.pick_global(project.read(), "bugs", "Bugs")
   end, { desc = "Global bugs picker across all projects" })
-  vim.api.nvim_create_user_command("ProjectIssuesTodoGlobal", function()
+  cmd("ProjectIssuesTodoGlobal", function()
     issues.pick_global(project.read(), "todos", "Todos")
   end, { desc = "Global todos picker across all projects" })
 
   -- @@@proj.git.commands
-  vim.api.nvim_create_user_command("ProjectGitStatus", function()
-    local cur = self:current_or_warn()
-    if cur then
+  cmd("ProjectGitStatus", function()
+    with_cur(function(cur)
       Snacks.picker.git_status({ cwd = cur.root, title = "Git Status" })
-    end
+    end)
   end, { desc = "Git status for current project" })
 
-  vim.api.nvim_create_user_command("ProjectGitDiff", function()
-    local cur = self:current_or_warn()
-    if cur then
+  cmd("ProjectGitDiff", function()
+    with_cur(function(cur)
       Snacks.picker.git_diff({ cwd = cur.root, title = "Git Diff" })
-    end
+    end)
   end, { desc = "Git diff for current project" })
 
-  vim.api.nvim_create_user_command("ProjectGitHistory", function()
-    local cur = self:current_or_warn()
-    if cur then
+  cmd("ProjectGitHistory", function()
+    with_cur(function(cur)
       Snacks.picker.git_log({ cwd = cur.root, title = "Git History" })
-    end
+    end)
   end, { desc = "Git history for current project" })
 
-  vim.api.nvim_create_user_command("ProjectGitCommit", function()
-    local cur = self:current_or_warn()
-    if cur then
+  cmd("ProjectGitCommit", function()
+    with_cur(function(cur)
       self:git_commit(cur.root)
-    end
+    end)
   end, { desc = "Git commit for current project" })
 
-  vim.api.nvim_create_user_command("ProjectGitStash", function()
-    local cur = self:current_or_warn()
-    if cur then
+  cmd("ProjectGitStash", function()
+    with_cur(function(cur)
       Snacks.picker.git_stash({ cwd = cur.root, title = "Git Stash" })
-    end
+    end)
   end, { desc = "Git stash for current project" })
 
-  vim.api.nvim_create_user_command("ProjectGitBranch", function()
-    local cur = self:current_or_warn()
-    if cur then
+  cmd("ProjectGitBranch", function()
+    with_cur(function(cur)
       Snacks.picker.git_branches({ cwd = cur.root, title = "Git Branches" })
-    end
+    end)
   end, { desc = "Git branches for current project" })
 
-  vim.api.nvim_create_user_command("ProjectOpenCode", function()
-    local cur = self:current()
-    if not cur then
-      utils.info("No active project, opening global opencode")
-      require("proj.opencode").toggle()
-      return
-    end
-    vim.cmd.tcd(vim.fn.fnameescape(cur.root))
-    require("proj.opencode").toggle()
-  end, { desc = "Toggle opencode for current project" })
-
-  vim.api.nvim_create_user_command("ProjectPreviewLists", function()
-    local cur = self:current_or_warn()
-    if not cur then
-      return
-    end
-    lists.toggle_preview(cur.root)
+  cmd("ProjectPreviewLists", function()
+    with_cur(function(cur)
+      lists.toggle_preview(cur.root)
+    end)
   end, { desc = "Toggle preview of all non-empty lists found in current project" })
 end
 
@@ -431,6 +544,25 @@ function ProjectManager:setup_autocmds(aug)
     end,
   })
 
+  vim.api.nvim_create_autocmd({ "BufEnter", "BufWritePost" }, {
+    group = aug,
+    desc = "Remember latest project file",
+    callback = function(args)
+      local file = vim.api.nvim_buf_get_name(args.buf)
+      if file == "" or file:match("^%a+://") then
+        return
+      end
+      if vim.bo[args.buf].buftype ~= "" then
+        return
+      end
+      local proj = project.find_by_path(file)
+      if not proj then
+        return
+      end
+      last_file.set(proj.root, file)
+    end,
+  })
+
   vim.api.nvim_create_autocmd("TabClosed", {
     group = aug,
     desc = "Clean up closed tab project entries",
@@ -443,17 +575,6 @@ function ProjectManager:setup_autocmds(aug)
     end,
   })
 
-  vim.api.nvim_create_autocmd("VimLeavePre", {
-    group = aug,
-    desc = "Save sessions on exit",
-    callback = function()
-      local cur = self:current()
-      if cur then
-        session.save(cur.name)
-      end
-      session.save_global()
-    end,
-  })
 end
 
 ---@private
