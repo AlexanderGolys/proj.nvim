@@ -546,7 +546,7 @@ function Lists:toggle_project_info(project_root)
     local todo_lines = { "# Todos (headers only)", "" }
     vim.list_extend(todo_lines, collect_todo_headers(project_root))
 
-    local width = math.max(36, math.floor(vim.o.columns * 0.34))
+    local width = math.max(30, math.min(vim.o.columns - 2, math.floor(vim.o.columns * 0.34)))
     local col = math.max(0, vim.o.columns - width - 2)
     local available_height = math.max(12, vim.o.lines - 6)
     local heights = {
