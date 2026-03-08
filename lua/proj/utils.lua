@@ -27,11 +27,16 @@ function M.error(msg)
     M.notify(msg, vim.log.levels.ERROR)
 end
 
+---@class proj.SystemResult
+---@field code integer
+---@field stdout? string
+---@field stderr? string
+
 ---@param path string
 ---@param context string
 ---@return boolean
 function M.ensure_parent_dir(path, context)
-    local dir = fn.fnamemodify(path, ":h")
+    local dir = M.dirname(path)
     if fn.isdirectory(dir) == 1 then
         return true
     end
@@ -41,6 +46,42 @@ function M.ensure_parent_dir(path, context)
         return false
     end
     return true
+end
+
+---@param path string
+---@return string
+function M.basename(path)
+    return fn.fnamemodify(path, ":t")
+end
+
+---@param path string
+---@return string
+function M.stem(path)
+    return fn.fnamemodify(path, ":r")
+end
+
+---@param path string
+---@return string
+function M.dirname(path)
+    return fn.fnamemodify(path, ":h")
+end
+
+---@param path string
+---@return string
+function M.parent_dir(path)
+    return fn.fnamemodify(path, ":p:h")
+end
+
+---@param path string
+---@return string
+function M.abs_path(path)
+    return fn.fnamemodify(path, ":p")
+end
+
+---@param path string
+---@return string
+function M.normalize_path(path)
+    return M.abs_path(path):gsub("[/\\]+$", "")
 end
 
 ---@param path string
@@ -109,6 +150,31 @@ function M.try_cmd(callback, context)
     end
     M.notify(context .. ": " .. tostring(err))
     return false
+end
+
+---@param lhs string
+---@param buf integer
+---@param modes? string[]
+function M.safe_del_keymap(lhs, buf, modes)
+    for _, mode in ipairs(modes or { "n", "x" }) do
+        pcall(vim.keymap.del, mode, lhs, { buffer = buf })
+    end
+end
+
+---@param prompt string
+---@param callback fun(value: string)
+function M.input_nonempty(prompt, callback)
+    Snacks.input({ prompt = prompt }, function(value)
+        if value and value ~= "" then
+            callback(value)
+        end
+    end)
+end
+
+---@param result proj.SystemResult
+---@return string
+function M.system_output(result)
+    return vim.trim(((result.stdout or "") .. "\n" .. (result.stderr or "")))
 end
 
 return M

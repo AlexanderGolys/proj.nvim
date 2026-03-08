@@ -6,6 +6,7 @@
 -- to avoid polluting the real registry.
 
 local project = require("proj.project")
+local utils = require("proj.utils")
 
 describe("proj.project", function()
     local tmp = vim.fn.tempname()
@@ -24,7 +25,7 @@ describe("proj.project", function()
     describe("new()", function()
         it("derives name from basename", function()
             local p = project.new(tmp)
-            assert.equals(vim.fn.fnamemodify(tmp, ":t"), p.name)
+            assert.equals(utils.basename(tmp), p.name)
             assert.equals(tmp, p.root)
         end)
 
@@ -36,7 +37,7 @@ describe("proj.project", function()
             vim.fn.writefile({ "-- test" }, proj_tmp .. "/lua/proj/init.lua")
 
             local p = project.new(proj_tmp)
-            assert.equals(vim.fn.fnamemodify(proj_tmp, ":t"), p.name)
+            assert.equals(utils.basename(proj_tmp), p.name)
             assert.equals(proj_tmp, p.root)
 
             vim.fn.delete(proj_tmp, "rf")

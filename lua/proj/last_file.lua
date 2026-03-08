@@ -1,5 +1,4 @@
 -- @@@proj.last_file
--- ###nvim-plugin
 
 local fn = vim.fn
 local utils = require("proj.utils")
@@ -42,7 +41,7 @@ end
 ---@param path string
 ---@return string
 local function normalize_path(path)
-  return fn.fnamemodify(path, ":p"):gsub("[/\\]+$", "")
+  return utils.normalize_path(path)
 end
 
 ---@private
@@ -52,12 +51,13 @@ end
 local function file_under_root(root, file)
   local normalized_root = normalize_path(root)
   local normalized_file = normalize_path(file)
-  return normalized_root ~= ""
-      and normalized_file == normalized_root
-      and true
-      or normalized_file:find("^" .. vim.pesc(normalized_root) .. "[/\\]")
-      and true
-      or false
+  if normalized_root == "" then
+    return false
+  end
+  if normalized_file == normalized_root then
+    return true
+  end
+  return normalized_file:find("^" .. vim.pesc(normalized_root) .. "[/\\]") ~= nil
 end
 
 ---@private

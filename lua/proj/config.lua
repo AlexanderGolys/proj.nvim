@@ -1,5 +1,4 @@
 -- @@@proj.config
--- ###nvim-plugin
 
 ---@class proj.KeymapConfig
 ---@field add_any_item? string|false Map for `ProjectGlobalAddAnyItem`.

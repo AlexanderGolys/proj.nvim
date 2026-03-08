@@ -18,8 +18,8 @@ and opens an empty picker.
 
 ## Switching projects no longer closes other tabs
 
-When running `:ProjectSwitch`, restoring the selected project session should
-only reset the current tab. Other tabs and their windows should remain open.
+When running `:ProjectSwitch`, opening the selected project should only affect
+the current tab. Other tabs and their windows should remain open.
 Verify with 3+ tabs open and switch projects repeatedly.
 
 ## Empty and missing list files handled gracefully
@@ -83,7 +83,8 @@ all registered projects. Each item prefixed with project name.
 ## ProjectSwitch command lists all registered projects
 
 `:ProjectSwitch` opens a snacks picker with all projects from the registry.
-Enter opens the selected project in current tab with session restore.
+Enter opens the selected project in current tab and loads last modified file
+for that project (or `readme.md` fallback).
 
 ## Lualine tabline component for current project
 

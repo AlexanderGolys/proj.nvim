@@ -94,6 +94,8 @@ Git pickers are delegated to `Snacks.picker.git_*` in the project root.
 
 **`:ProjectPreviewLists`** — Toggle floating preview of all non-empty `.md` lists in project root.
 
+**`:ProjectInfo`** — Toggle a right-side floating project info panel showing name, root, last modified file, file tree, and TODO headers.
+
 ## Setup Options
 
 Standard usage:

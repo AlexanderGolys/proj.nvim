@@ -3,7 +3,7 @@
 ### Completed
 
 - [x] Project registration and switching
-- [x] Per-project and global sessions
+- [x] Per-project last modified file restore (`readme.md` fallback)
 - [x] Markdown list pickers with `##` heading support
 - [x] Cross-project list aggregation
 - [x] JSON-based issue tracking (.issues)

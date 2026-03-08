@@ -1,5 +1,4 @@
 -- @@@proj.issues
--- ###nvim-plugin
 
 local fn = vim.fn
 local utils = require("proj.utils")
@@ -126,7 +125,11 @@ function Issues:pick(path, title, project_root)
             }
         end
     end
-    local function reopen() vim.schedule(function() self:pick(path, title, project_root) end) end
+    local function reopen()
+        vim.schedule(function()
+            self:pick(path, title, project_root)
+        end)
+    end
     Snacks.picker({
         title = title,
         footer = "<CR> open file  |  dd delete  |  mr mark resolved  |  mi mark in-progress",
@@ -166,11 +169,15 @@ function Issues:pick(path, title, project_root)
                 reopen()
             end,
         },
-        win = { input = { keys = {
-            ["dd"] = { "issue_delete", mode = { "n" } },
-            ["mr"] = { "issue_resolved", mode = { "n" } },
-            ["mi"] = { "issue_in_progress", mode = { "n" } },
-        } } },
+        win = {
+            input = {
+                keys = {
+                    ["dd"] = { "issue_delete", mode = { "n" } },
+                    ["mr"] = { "issue_resolved", mode = { "n" } },
+                    ["mi"] = { "issue_in_progress", mode = { "n" } },
+                }
+            }
+        },
     })
 end
 
@@ -224,10 +231,12 @@ local M = { Issues = Issues }
 ---@param title string
 ---@param project_root? string
 function M.pick(path, title, project_root) service:pick(path, title, project_root) end
+
 ---@param projects proj.Project[]
 ---@param kind proj.IssueKind
 ---@param title string
 function M.pick_global(projects, kind, title) service:pick_global(projects, kind, title) end
+
 ---@param root string
 ---@param kind proj.IssueKind
 ---@return string

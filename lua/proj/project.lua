@@ -9,15 +9,21 @@ local utils = require("proj.utils")
 ---@field name string
 ---@field open_count integer
 
+---@alias proj.ProjectRootIndex table<string, integer>
+
+---@class proj.ProjectEntry
+---@field root? unknown
+---@field name? unknown
+---@field open_count? unknown
+
 ---@class proj.ProjectList
 ---@field path string Absolute path to `proj_registry.json`.
 ---@field projects proj.Project[]
----@field by_root table<string, integer>
+---@field by_root proj.ProjectRootIndex
 local ProjectList = {}
 ProjectList.__index = ProjectList
 
----@private
----@param entry table
+---@param entry proj.ProjectEntry
 ---@return proj.Project?
 local function normalize_project(entry)
   if type(entry) ~= "table" or type(entry.root) ~= "string" or entry.root == "" then
@@ -29,7 +35,7 @@ local function normalize_project(entry)
   end
   return {
     root = entry.root,
-    name = (type(entry.name) == "string" and entry.name ~= "") and entry.name or fn.fnamemodify(entry.root, ":t"),
+    name = (type(entry.name) == "string" and entry.name ~= "") and entry.name or utils.basename(entry.root),
     open_count = math.floor(count),
   }
 end
@@ -40,6 +46,19 @@ function ProjectList:reindex()
   for idx, proj in ipairs(self.projects) do
     self.by_root[proj.root] = idx
   end
+end
+
+---@private
+---@param entries table
+function ProjectList:load_entries(entries)
+  self.projects = {}
+  for _, entry in ipairs(entries) do
+    local proj = normalize_project(entry)
+    if proj then
+      self.projects[#self.projects + 1] = proj
+    end
+  end
+  self:reindex()
 end
 
 ---@param path? string
@@ -57,20 +76,12 @@ end
 ---@param root string
 ---@return proj.Project
 function ProjectList:new_project(root)
-  return { root = root, name = fn.fnamemodify(root, ":t"), open_count = 0 }
+  return { root = root, name = utils.basename(root), open_count = 0 }
 end
 
 ---@return proj.Project[]
 function ProjectList:reload()
-  local raw = utils.read_json(self.path)
-  self.projects = {}
-  for _, entry in ipairs(raw) do
-    local proj = normalize_project(entry)
-    if proj then
-      self.projects[#self.projects + 1] = proj
-    end
-  end
-  self:reindex()
+  self:load_entries(utils.read_json(self.path))
   return vim.deepcopy(self.projects)
 end
 
@@ -81,14 +92,7 @@ end
 
 ---@param data proj.Project[]
 function ProjectList:set(data)
-  self.projects = {}
-  for _, entry in ipairs(data) do
-    local proj = normalize_project(entry)
-    if proj then
-      self.projects[#self.projects + 1] = proj
-    end
-  end
-  self:reindex()
+  self:load_entries(data)
   self:save()
 end
 

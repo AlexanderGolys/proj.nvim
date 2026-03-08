@@ -9,7 +9,7 @@ Guidance for coding agents working in this repo.
 - Language: Lua (Neovim plugin)
 - Entry module: `lua/proj.lua`
 - Type annotations: LuaCATS (`---@class`, `---@param`, `---@return`)
-- Dependencies: snacks.nvim (picker, input, win), opencode.nvim
+- Dependencies: snacks.nvim (picker, input, win)
 
 ## Build / lint / test
 
@@ -34,7 +34,6 @@ Manual smoke-test in Neovim with the plugin on `runtimepath`:
 - `:ProjectIssuesGlobal` / `:ProjectIssuesTodoGlobal` -- cross-project issues
 - `:ProjectGitStatus` / `:ProjectGitDiff` / `:ProjectGitHistory` -- git operations
 - `:ProjectGitCommit` / `:ProjectGitStash` / `:ProjectGitBranch` -- more git ops
-- `:ProjectOpenCode` -- toggle opencode terminal for current project
 - `:ProjectHelp` -- open plugin help in equal vertical split
 - `:ProjectPreviewLists` -- toggle floating preview of all project lists
 
@@ -47,12 +46,12 @@ lua/
 lua/proj/
     project.lua      ProjectList class + persistent registry (json read/parse/write)
     config.lua       Config defaults/resolution used by setup(opts)
-    session.lua      Per-project + global session save/restore
+    last_file.lua    Persistent last-modified file tracking per project
     lists.lua        Parse/pick/add markdown lists; cross-project aggregation
     issues.lua       JSON-based issue tracking (.issues/{bugs,todos}.json)
-    opencode.lua     Opencode terminal toggling per-project
     utils.lua        Shared IO/json/notify helpers for proj modules
 tests/
+    last_file_spec.lua
     project_spec.lua
     lists_spec.lua
 ```
@@ -67,7 +66,7 @@ Use `<C-]>` on a `|||ref|||` to jump to the corresponding `@@@mark`.
 Not a dependency -- just bookmarks for cross-module navigation.
 
 ```lua
--- @@@proj.session
+-- @@@proj.last_file
 -- ###nvim-plugin
 ```
 
@@ -85,12 +84,10 @@ Do not duplicate style rules in this file.
 ## Key design rules
 
 - One project per tab. `proj.lua` maintains a `tabpage -> Project` map.
-- Sessions stored under `vim.fn.stdpath("data") .. "/proj_sessions/"`.
-- Global session: `_global.vim`; per-project: `<sanitized_name>.vim`.
+- Last modified files map stored under `vim.fn.stdpath("data") .. "/proj_last_files.json"`.
 - Registry file: `vim.fn.stdpath("data") .. "/proj_registry.json"`.
 - List files (any `.md` with `##` headings) live in the project root.
-- Opencode: `require("opencode").toggle()` scoped by tab CWD.
-- No session for a project -> `vim.cmd.edit(root)` (opens in user's explorer).
+- On project load, opens remembered file if available; otherwise `readme.md`, then project root.
 
 ## Adding new features
 
@@ -104,5 +101,5 @@ Do not duplicate style rules in this file.
 - Only edit files under `plugin/`, `lua/proj/`, `tests/`, `AGENTS.md`, `README.md`, `TODO.md`, `TOTEST.md`.
 - Preserve fluxtag marks when editing; add new ones as needed.
 - Keep changes minimal.
-- Do not add dependencies beyond snacks.nvim and opencode.nvim.
+- Do not add dependencies beyond snacks.nvim.
 - When unsure, check snacks.nvim source at `~/.local/share/nvim/lazy/snacks.nvim/`.

@@ -1,5 +1,4 @@
 -- @@@proj.lists
--- ###nvim-plugin
 
 local fn, api = vim.fn, vim.api
 local utils = require("proj.utils")
@@ -125,7 +124,7 @@ local function collect_file_tree(root, depth)
     end
     table.sort(entries)
     for _, name in ipairs(entries) do
-      if name == "." or name == ".." or name:sub(1, 1) == "." then
+      if (name == "." or name == ".." or name:sub(1, 1) == ".") then
         goto continue
       end
       if count >= max_nodes then
@@ -149,18 +148,72 @@ local function collect_file_tree(root, depth)
 end
 
 ---@private
+---@param root string
+---@param file string
+---@return boolean
+local function is_under_root(root, file)
+  local normalized_root = utils.normalize_path(root)
+  local normalized_file = utils.normalize_path(file)
+  return normalized_file:find("^" .. vim.pesc(normalized_root) .. "[/\\]") ~= nil
+end
+
+---@private
+---@param root string
+---@param file string
+---@return string
+local function relative_to_root(root, file)
+  local normalized_root = utils.normalize_path(root)
+  local normalized_file = utils.normalize_path(file)
+  return normalized_file:gsub("^" .. vim.pesc(normalized_root) .. "[/\\]?", "")
+end
+
+---@private
+---@param root string
+---@return string?
+local function find_last_modified_file(root)
+  local latest_file, latest_mtime = nil, -1
+
+  local function walk(dir)
+    local ok, entries = pcall(fn.readdir, dir)
+    if not ok then
+      return
+    end
+    for _, name in ipairs(entries) do
+      if name ~= "." and name ~= ".." and name:sub(1, 1) ~= "." then
+        local path = dir .. "/" .. name
+        if fn.isdirectory(path) == 1 then
+          walk(path)
+        else
+          local mtime = tonumber(fn.getftime(path)) or -1
+          if mtime > latest_mtime then
+            latest_mtime = mtime
+            latest_file = path
+          end
+        end
+      end
+    end
+  end
+
+  walk(root)
+  return latest_file
+end
+
+---@private
 ---@param lines string[]
 ---@param title string
 ---@param row integer
 ---@param col integer
 ---@param width integer
 ---@param height integer
+---@param filetype? string
 ---@return integer
 ---@return integer
-local function open_info_window(lines, title, row, col, width, height, focus)
+local function open_info_window(lines, title, row, col, width, height, focus, filetype)
   local buf = api.nvim_create_buf(false, true)
   api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-  vim.bo[buf].filetype = "markdown"
+  if filetype and filetype ~= "" then
+    vim.bo[buf].filetype = filetype
+  end
   vim.bo[buf].modifiable = false
   vim.bo[buf].readonly = true
   vim.bo[buf].bufhidden = "wipe"
@@ -178,7 +231,7 @@ local function open_info_window(lines, title, row, col, width, height, focus)
     focusable = focus == true,
   })
   api.nvim_win_set_option(win, "wrap", false)
-  api.nvim_win_set_option(win, "conceallevel", 2)
+  api.nvim_win_set_option(win, "conceallevel", filetype == "markdown" and 2 or 0)
   return win, buf
 end
 
@@ -187,6 +240,12 @@ local function close_project_info_windows(wins)
     if api.nvim_win_is_valid(win) then
       pcall(api.nvim_win_close, win, true)
     end
+  end
+end
+
+local function close_explorer_picker()
+  for _, picker in ipairs(Snacks.picker.get({ source = "explorer" })) do
+    picker:close()
   end
 end
 
@@ -232,7 +291,7 @@ function Lists:move_item(item, src, dst, annotation)
         return
     end
     self:delete_item(src, item.header)
-    utils.info("Moved '" .. item.header .. "' -> " .. fn.fnamemodify(dst, ":t"))
+    utils.info("Moved '" .. item.header .. "' -> " .. utils.basename(dst))
 end
 
 ---@private
@@ -243,7 +302,7 @@ function Lists:pick_target(project_root, exclude_filepath, callback)
     local items = {}
     for _, path in ipairs(self:markdown_files(project_root)) do
         if path ~= exclude_filepath then
-            items[#items + 1] = { text = fn.fnamemodify(path, ":t"), path = path }
+            items[#items + 1] = { text = utils.basename(path), path = path }
         end
     end
     Snacks.picker({
@@ -283,7 +342,7 @@ function Lists:pick(filepath, title, project_root)
             return
         end
     end
-    local is_todo = fn.fnamemodify(filepath, ":t"):upper() == "TODO.MD"
+    local is_todo = utils.basename(filepath):upper() == "TODO.MD"
     local totest = project_root and (project_root .. "/TOTEST.md") or nil
     local picker_items = {}
     for _, item in ipairs(self:parse(filepath)) do
@@ -418,7 +477,7 @@ function Lists:add_to_any_project_list(projects)
             if not proj then return end
             local list_items = {}
             for _, path in ipairs(self:markdown_files(proj.root)) do
-                list_items[#list_items + 1] = { text = fn.fnamemodify(path, ":t"), path = path }
+                list_items[#list_items + 1] = { text = utils.basename(path), path = path }
             end
             Snacks.picker({
                 title = "Select list in " .. proj.text,
@@ -433,7 +492,7 @@ function Lists:add_to_any_project_list(projects)
                         if not typed or typed == "" then return end
                         filepath = proj.root .. "/" .. (typed:match("%.md$") and typed or typed .. ".md")
                     end
-                    local list_name = fn.fnamemodify(filepath, ":r")
+                    local list_name = utils.stem(filepath)
                     utils.input_nonempty("New " .. list_name .. " (" .. proj.text .. ")", function(value)
                         self:add(filepath, value)
                     end)
@@ -473,7 +532,7 @@ function Lists:add(filepath, text)
         existing[#existing + 1] = lines[i]
     end
     if utils.write_lines(filepath, existing, "list file") then
-        utils.info("Added to " .. fn.fnamemodify(filepath, ":t"))
+        utils.info("Added to " .. utils.basename(filepath))
     else
         utils.warn("Failed to write to list file")
     end
@@ -490,7 +549,7 @@ function Lists:toggle_preview(project_root)
     for _, path in ipairs(self:markdown_files(project_root)) do
         local items = self:parse(path)
         if #items > 0 then
-            local filename = fn.fnamemodify(path, ":t")
+            local filename = utils.basename(path)
             if #lines > 0 then
                 vim.list_extend(lines, { "", "---", "" })
             end
@@ -519,44 +578,41 @@ function Lists:toggle_preview(project_root)
 end
 
 ---@param project_root string
+---@return nil
 function Lists:toggle_project_info(project_root)
     self.project_info_wins = self.project_info_wins or {}
     if #self.project_info_wins > 0 then
         close_project_info_windows(self.project_info_wins)
+        close_explorer_picker()
         self.project_info_wins = {}
         self.project_info_bufs = {}
         return
     end
 
     local last_modified = last_file.get(project_root)
+    if not (last_modified and last_modified ~= "" and fn.filereadable(last_modified) == 1 and is_under_root(project_root, last_modified)) then
+      last_modified = find_last_modified_file(project_root)
+    end
     local info_lines = {
-        "# Project Info",
-        "",
-        "## Name",
-        "  " .. fn.fnamemodify(project_root, ":t"),
-        "## Root",
-        "  " .. project_root,
-        "## Last Modified File",
-        "  " .. ((last_modified and last_modified ~= "" and last_modified) or "(none)"),
+        utils.basename(project_root),
+        project_root,
+        "Last modified: " .. ((last_modified and last_modified ~= "" and relative_to_root(project_root, last_modified)) or "(none)"),
     }
 
-    local file_tree_lines = { "# File Tree", "" }
-    vim.list_extend(file_tree_lines, collect_file_tree(project_root, 3))
-
-    local todo_lines = { "# Todos (headers only)", "" }
+    local todo_lines = { "Todos (headers only)", "" }
     vim.list_extend(todo_lines, collect_todo_headers(project_root))
 
     local width = math.max(30, math.min(vim.o.columns - 2, math.floor(vim.o.columns * 0.34)))
-    local col = math.max(0, vim.o.columns - width - 2)
+    local col = 1
     local available_height = math.max(12, vim.o.lines - 6)
     local heights = {
         math.max(6, #info_lines + 2),
-        math.max(8, #file_tree_lines + 2),
+        math.max(10, math.floor(available_height * 0.5)),
         math.max(6, #todo_lines + 2),
     }
     local minimum = { 4, 4, 4 }
 
-    while heights[1] + heights[2] + heights[3] > available_height do
+    while heights[1] + heights[2] + heights[3] + 6 > available_height do
         if heights[2] > minimum[2] then
             heights[2] = heights[2] - 1
         elseif heights[3] > minimum[3] then
@@ -571,22 +627,49 @@ function Lists:toggle_project_info(project_root)
     local row = 1
     local win_rows = {
         row,
-        row + heights[1],
-        row + heights[1] + heights[2],
+        row + heights[1] + 2,
+        row + heights[1] + heights[2] + 4,
     }
 
     local close = function()
         close_project_info_windows(self.project_info_wins)
+        close_explorer_picker()
         self.project_info_wins = {}
         self.project_info_bufs = {}
     end
 
-    local info_win, info_buf = open_info_window(info_lines, "Project", win_rows[1], col, width, heights[1], true)
-    local tree_win, tree_buf = open_info_window(file_tree_lines, "File tree", win_rows[2], col, width, heights[2], false)
-    local todo_win, todo_buf = open_info_window(todo_lines, "Todos", win_rows[3], col, width, heights[3], false)
+    local info_win, info_buf = open_info_window(info_lines, "Project", win_rows[1], col, width, heights[1], true, "text")
+    local todo_win, todo_buf = open_info_window(todo_lines, "Todos", win_rows[3], col, width, heights[3], false, "text")
 
-    self.project_info_wins = { info_win, tree_win, todo_win }
-    self.project_info_bufs = { info_buf, tree_buf, todo_buf }
+    close_explorer_picker()
+    Snacks.picker.explorer({
+        cwd = project_root,
+        title = "File Tree",
+        hidden = { "input", "preview" },
+        layout = {
+            preview = false,
+            layout = {
+                relative = "editor",
+                backdrop = false,
+                row = win_rows[2],
+                col = col,
+                width = width,
+                height = heights[2],
+                border = "rounded",
+                title = "File Tree",
+                title_pos = "center",
+                box = "vertical",
+                { win = "list", border = "none" },
+            },
+        },
+    })
+
+    self.project_info_wins = { info_win, todo_win }
+    self.project_info_bufs = { info_buf, todo_buf }
+    api.nvim_buf_add_highlight(info_buf, -1, "Title", 0, 0, -1)
+    api.nvim_buf_add_highlight(info_buf, -1, "Directory", 1, 0, -1)
+    api.nvim_buf_add_highlight(info_buf, -1, "Comment", 2, 0, -1)
+    api.nvim_buf_add_highlight(todo_buf, -1, "Title", 0, 0, -1)
     vim.keymap.set("n", "q", close, { buffer = info_buf, noremap = true, silent = true, nowait = true, desc = "Close project info" })
     vim.keymap.set("n", "<Esc>", close, { buffer = info_buf, noremap = true, silent = true, nowait = true, desc = "Close project info" })
 end

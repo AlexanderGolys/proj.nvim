@@ -26,6 +26,62 @@ function ProjectManager:new()
   return setmetatable({ cfg = vim.deepcopy(config.get()), tab_projects = {} }, self)
 end
 
+---@private
+---@param session_file string
+---@return string
+function ProjectManager:session_state_path(session_file)
+  local normalized = vim.fn.fnamemodify(session_file, ":p")
+  local key = normalized:gsub("[^%w_.-]", "%%")
+  return vim.fn.stdpath("data") .. "/proj_sessions/" .. key .. ".json"
+end
+
+---@private
+---@param args? table
+---@return string?
+function ProjectManager:resolve_session_file(args)
+  local file = args and args.file or vim.v.this_session
+  if type(file) ~= "string" or file == "" then
+    return nil
+  end
+  return vim.fn.fnamemodify(file, ":p")
+end
+
+---@private
+---@param session_file string
+function ProjectManager:save_session_state(session_file)
+  local by_tabnr = {}
+  for idx, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    local proj = self.tab_projects[tab]
+    if proj and type(proj.root) == "string" and proj.root ~= "" then
+      by_tabnr[tostring(idx)] = proj.root
+    end
+  end
+  utils.write_json(self:session_state_path(session_file), by_tabnr, "proj session state")
+end
+
+---@private
+---@param session_file string
+function ProjectManager:load_session_state(session_file)
+  local state = utils.read_json(self:session_state_path(session_file))
+  if vim.tbl_isempty(state) then
+    return
+  end
+
+  local by_root = {}
+  for _, proj in ipairs(project.read()) do
+    by_root[proj.root] = proj
+  end
+
+  self.tab_projects = {}
+  for idx, tab in ipairs(vim.api.nvim_list_tabpages()) do
+    local root = state[tostring(idx)]
+    local proj = type(root) == "string" and by_root[root] or nil
+    if proj then
+      self.tab_projects[tab] = proj
+    end
+  end
+end
+
 ---@param tabpage? integer
 ---@return proj.Project?
 function ProjectManager:current(tabpage)
@@ -38,7 +94,7 @@ function ProjectManager:current_buf_dir()
   local buf = vim.api.nvim_get_current_buf()
   local buf_name = vim.api.nvim_buf_get_name(buf)
   if buf_name ~= "" and not buf_name:match("^%a+://") then
-    return vim.fn.fnamemodify(buf_name, ":p:h")
+    return utils.parent_dir(buf_name)
   end
   return vim.fn.getcwd()
 end
@@ -292,7 +348,7 @@ function ProjectManager:setup_commands()
         return { "README:", "  (empty)" }
       end
 
-      local lines = { "README (" .. vim.fn.fnamemodify(path, ":t") .. "):" }
+      local lines = { "README (" .. utils.basename(path) .. "):" }
       local max_lines = 20
       local shown = math.min(#content, max_lines)
       for idx = 1, shown do
@@ -305,7 +361,7 @@ function ProjectManager:setup_commands()
       return lines
     end
 
-    local function preview_text(root, name, open_count)
+    local function preview_lines(root, name, open_count)
       local remembered = remembered_by_root[root]
       local readme = readme_path(root)
       local fallback = readme or root
@@ -333,7 +389,7 @@ function ProjectManager:setup_commands()
       vim.list_extend(lines, root_files_preview(root))
       lines[#lines + 1] = ""
       vim.list_extend(lines, readme_preview(root))
-      return table.concat(lines, "\n")
+      return lines
     end
 
     local items = {}
@@ -343,10 +399,7 @@ function ProjectManager:setup_commands()
         root = p.root,
         name = p.name,
         open_count = p.open_count or 0,
-        preview = {
-          text = preview_text(p.root, p.name, p.open_count or 0),
-          ft = "markdown",
-        },
+        preview_lines = preview_lines(p.root, p.name, p.open_count or 0),
       }
     end
     Snacks.picker({
@@ -354,6 +407,10 @@ function ProjectManager:setup_commands()
       items = items,
       format = function(item)
         return { { item.text } }
+      end,
+      preview = function(ctx)
+        ctx.preview:set_lines(ctx.item.preview_lines or { "(no preview)" })
+        return true
       end,
       confirm = function(picker, item)
         picker:close()
@@ -367,13 +424,13 @@ function ProjectManager:setup_commands()
   cmd("ProjectList", function(call)
     with_cur(function(cur)
       local filename = call.args
-      lists.pick(cur.root .. "/" .. filename, vim.fn.fnamemodify(filename, ":r"), cur.root)
+      lists.pick(cur.root .. "/" .. filename, utils.stem(filename), cur.root)
     end)
   end, { nargs = 1, desc = "Pick items from a project list file" })
 
   cmd("ProjectAddItem", function(call)
     local filename = call.args
-    self:add_to_list(filename, vim.fn.fnamemodify(filename, ":r"))
+    self:add_to_list(filename, utils.stem(filename))
   end, { nargs = 1, desc = "Add item to a project list file" })
 
   local open_current_readme = function()
@@ -412,7 +469,7 @@ function ProjectManager:setup_commands()
 
   cmd("ProjectGlobalList", function(call)
     local filename = call.args
-    lists.pick_global(project.read(), filename, vim.fn.fnamemodify(filename, ":r"))
+    lists.pick_global(project.read(), filename, utils.stem(filename))
   end, { nargs = 1, desc = "Pick items from a list across all projects" })
 
   for _, item in ipairs({ { "TODO.md", "TODO" }, { "BUGS.md", "BUGS" }, { "TOTEST.md", "TOTEST" } }) do
@@ -437,7 +494,7 @@ function ProjectManager:setup_commands()
 
   cmd("ProjectGlobalAddItem", function(call)
     local filename = call.args
-    lists.add_to_project(project.read(), filename, vim.fn.fnamemodify(filename, ":r"))
+    lists.add_to_project(project.read(), filename, utils.stem(filename))
   end, { nargs = 1, desc = "Add item to a list in any project" })
 
   cmd("ProjectGlobalAddAnyItem", function()
@@ -515,6 +572,12 @@ function ProjectManager:setup_commands()
       lists.toggle_preview(cur.root)
     end)
   end, { desc = "Toggle preview of all non-empty lists found in current project" })
+
+  cmd("ProjectInfo", function()
+    with_cur(function(cur)
+      lists.toggle_project_info(cur.root)
+    end)
+  end, { desc = "Toggle project info panel (right floating preview)" })
 end
 
 ---@private
@@ -575,6 +638,30 @@ function ProjectManager:setup_autocmds(aug)
     end,
   })
 
+  vim.api.nvim_create_autocmd("SessionWritePost", {
+    group = aug,
+    desc = "Persist active project per tab for session restore",
+    callback = function(args)
+      local session_file = self:resolve_session_file(args)
+      if session_file then
+        self:save_session_state(session_file)
+      end
+    end,
+  })
+
+  vim.api.nvim_create_autocmd("SessionLoadPost", {
+    group = aug,
+    desc = "Restore active project per tab after session load",
+    callback = function(args)
+      local session_file = self:resolve_session_file(args)
+      if not session_file then
+        return
+      end
+      self:load_session_state(session_file)
+      self:sync_tab_cwd()
+      self:sync_register_keymap()
+    end,
+  })
 end
 
 ---@private
