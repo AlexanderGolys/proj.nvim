@@ -303,7 +303,12 @@ function ProjectManager:setup_commands()
     end
     local remembered_by_root = last_file.all()
     table.sort(projects, function(a, b)
-      return (a.open_count or 0) > (b.open_count or 0)
+      local a_score = project.score(a.root) or 0
+      local b_score = project.score(b.root) or 0
+      if a_score == b_score then
+        return a.name < b.name
+      end
+      return a_score > b_score
     end)
 
     local function readme_path(root)

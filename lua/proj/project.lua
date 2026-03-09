@@ -196,6 +196,12 @@ function M.increment_open(root)
 end
 
 ---@param root string
+---@return number?
+function M.score(root)
+  return registry:score(root)
+end
+
+---@param root string
 function M.remove(root)
   registry:remove(root)
 end
